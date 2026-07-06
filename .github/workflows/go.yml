@@ -1,0 +1,133 @@
+name: Release
+
+permissions:
+  contents: write
+
+on:
+  push:
+    tags:
+      - v*
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-amd64
+            goos: linux
+            goarch: amd64
+          - platform: linux-386
+            goos: linux
+            goarch: "386"
+          - platform: linux-arm64
+            goos: linux
+            goarch: arm64
+          - platform: linux-armv5
+            goos: linux
+            goarch: arm
+            goarm: "5"
+          - platform: linux-armv6
+            goos: linux
+            goarch: arm
+            goarm: "6"
+          - platform: linux-armv7
+            goos: linux
+            goarch: arm
+            goarm: "7"
+          - platform: linux-s390x
+            goos: linux
+            goarch: s390x
+          - platform: windows-amd64
+            goos: windows
+            goarch: amd64
+          - platform: windows-386
+            goos: windows
+            goarch: "386"
+          - platform: windows-arm64
+            goos: windows
+            goarch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+        run: |
+          BIN=mtg-multi
+          if [[ "${{ matrix.goos }}" == "windows" ]]; then
+            BIN=mtg-multi.exe
+          fi
+          go build -trimpath -mod=readonly \
+            -ldflags "-s -w -X main.version=${{ steps.version.outputs.version }}" \
+            -o "build/${BIN}" .
+
+      - name: Package
+        run: |
+          PKG="mtg-multi-${{ steps.version.outputs.version }}-${{ matrix.platform }}"
+          mkdir -p "dist/${PKG}"
+          cp LICENSE README.md example.config.toml "dist/${PKG}/"
+          cp build/mtg-multi* "dist/${PKG}/"
+          cd dist
+          if [[ "${{ matrix.goos }}" == "windows" ]]; then
+            zip -r "${PKG}.zip" "${PKG}"
+          else
+            tar -czf "${PKG}.tar.gz" "${PKG}"
+          fi
+          rm -r "${PKG}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: mtg-multi-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum -- * > "mtg-multi-${GITHUB_REF_NAME#v}-checksums.txt"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*
+          generate_release_notes: true

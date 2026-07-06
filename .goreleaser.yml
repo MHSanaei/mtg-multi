@@ -9,11 +9,13 @@ before:
     - go mod tidy
     - go generate ./...
 
+# Linux and Windows release archives are built by .github/workflows/go.yml;
+# goreleaser only contributes the darwin builds to avoid duplicate asset
+# names on the same release.
 builds:
   - id: default
     binary: mtg-multi
     goos:
-      - linux
       - darwin
     goarch:
       - amd64
@@ -42,4 +44,4 @@ snapshot:
   version_template: '{{ .Version }}'
 
 checksum:
-  name_template: '{{ .ProjectName }}-{{ .Version }}-checksums.txt'
+  name_template: '{{ .ProjectName }}-{{ .Version }}-darwin-checksums.txt'
