@@ -34,7 +34,7 @@ func TestBuildSecretSet(t *testing.T) {
 	bob := GenerateSecret("shared.example.com")
 	carol := GenerateSecret("carol.example.com")
 
-	set := buildSecretSet(map[string]Secret{"bob": bob, "alice": alice, "carol": carol})
+	set := buildSecretSet(map[string]Secret{"bob": bob, "alice": alice, "carol": carol}, nil, nil)
 
 	assert.Equal(t, []string{"alice", "bob", "carol"}, set.names)
 	require.Len(t, set.secrets, 3)
@@ -49,7 +49,7 @@ func newReloadTestProxy(secrets map[string]Secret) *Proxy {
 		stats:     NewProxyStats(),
 		liveConns: make(map[string]map[*streamContext]struct{}),
 	}
-	set := buildSecretSet(secrets)
+	set := buildSecretSet(secrets, nil, nil)
 
 	for _, name := range set.names {
 		p.stats.PreRegister(name)
@@ -78,8 +78,8 @@ func TestProxyReloadSecrets(t *testing.T) {
 		t.Parallel()
 
 		p := newReloadTestProxy(map[string]Secret{"alice": alice, "bob": bob})
-		p.reloader = func() (map[string]Secret, error) {
-			return map[string]Secret{"alice": alice}, nil
+		p.reloader = func() (SecretConfig, error) {
+			return SecretConfig{Secrets: map[string]Secret{"alice": alice}}, nil
 		}
 
 		aliceStream := registerFakeStream(p, "alice")
@@ -97,8 +97,8 @@ func TestProxyReloadSecrets(t *testing.T) {
 
 		p := newReloadTestProxy(map[string]Secret{"alice": alice})
 		rekeyed := GenerateSecret("alice.example.com")
-		p.reloader = func() (map[string]Secret, error) {
-			return map[string]Secret{"alice": rekeyed}, nil
+		p.reloader = func() (SecretConfig, error) {
+			return SecretConfig{Secrets: map[string]Secret{"alice": rekeyed}}, nil
 		}
 
 		stream := registerFakeStream(p, "alice")
@@ -113,8 +113,8 @@ func TestProxyReloadSecrets(t *testing.T) {
 		t.Parallel()
 
 		p := newReloadTestProxy(map[string]Secret{"alice": alice})
-		p.reloader = func() (map[string]Secret, error) {
-			return map[string]Secret{"alice": alice, "bob": bob}, nil
+		p.reloader = func() (SecretConfig, error) {
+			return SecretConfig{Secrets: map[string]Secret{"alice": alice, "bob": bob}}, nil
 		}
 
 		stream := registerFakeStream(p, "alice")
@@ -142,8 +142,8 @@ func TestProxyReloadSecrets(t *testing.T) {
 		t.Parallel()
 
 		p := newReloadTestProxy(map[string]Secret{"alice": alice})
-		p.reloader = func() (map[string]Secret, error) {
-			return nil, errors.New("cannot read config")
+		p.reloader = func() (SecretConfig, error) {
+			return SecretConfig{}, errors.New("cannot read config")
 		}
 
 		assert.Error(t, p.ReloadSecrets())
@@ -154,8 +154,8 @@ func TestProxyReloadSecrets(t *testing.T) {
 		t.Parallel()
 
 		p := newReloadTestProxy(map[string]Secret{"alice": alice})
-		p.reloader = func() (map[string]Secret, error) {
-			return map[string]Secret{}, nil
+		p.reloader = func() (SecretConfig, error) {
+			return SecretConfig{Secrets: map[string]Secret{}}, nil
 		}
 
 		assert.ErrorIs(t, p.ReloadSecrets(), ErrSecretInvalid)

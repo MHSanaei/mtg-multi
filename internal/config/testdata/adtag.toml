@@ -1,0 +1,10 @@
+bind-to = "0.0.0.0:3128"
+ad-tag = "0123456789abcdef0123456789abcdef"
+api-token = "s3cr3t"
+
+[secrets]
+alice = "7oe1GqLy6TBc38CV3jx7q09nb29nbGUuY29t"
+bob = "ee367a189aee18fa31c190054efd4a8e9573746f726167652e676f6f676c65617069732e636f6d"
+
+[secret-ad-tags]
+bob = "fedcba9876543210fedcba9876543210"

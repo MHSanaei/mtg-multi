@@ -286,18 +286,22 @@ func warnDeprecatedDomainFronting(conf *config.Config, log mtglib.Logger) {
 // `mtg run`, so an operator editing [secrets] and calling reload swaps the set
 // without a restart. It returns nil when there is no config file (simple-run),
 // leaving reload unsupported.
-func makeSecretsReloader(configPath string) func() (map[string]mtglib.Secret, error) {
+func makeSecretsReloader(configPath string) func() (mtglib.SecretConfig, error) {
 	if configPath == "" {
 		return nil
 	}
 
-	return func() (map[string]mtglib.Secret, error) {
+	return func() (mtglib.SecretConfig, error) {
 		conf, err := utils.ReadConfig(configPath)
 		if err != nil {
-			return nil, err
+			return mtglib.SecretConfig{}, err
 		}
 
-		return conf.GetSecrets(), nil
+		return mtglib.SecretConfig{
+			Secrets:      conf.GetSecrets(),
+			SecretAdTags: conf.GetSecretAdTags(),
+			GlobalAdTag:  conf.GetAdTag(),
+		}, nil
 	}
 }
 
@@ -376,7 +380,14 @@ func runProxy(conf *config.Config, version, configPath string) error { //nolint:
 		DoppelGangerDRS:     conf.Defense.Doppelganger.DRS.Get(false),
 
 		APIBindTo:       conf.APIBindTo.Get(""),
+		APIToken:        conf.GetAPIToken(),
 		SecretsReloader: makeSecretsReloader(configPath),
+
+		GlobalAdTag:    conf.GetAdTag(),
+		SecretAdTags:   conf.GetSecretAdTags(),
+		PublicIPv4:     conf.PublicIPv4.Get(nil),
+		PublicIPv6:     conf.PublicIPv6.Get(nil),
+		AdvertisedPort: int(conf.GetFirstBindPort()),
 
 		ThrottleMaxConnections: conf.Throttle.MaxConnections.Get(0),
 		ThrottleCheckInterval:  conf.Throttle.CheckInterval.Get(5 * time.Second),

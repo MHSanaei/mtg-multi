@@ -20,10 +20,35 @@ debug = true
 # that secret should either be base64-encoded or starts with ee.
 secret = "ee367a189aee18fa31c190054efd4a8e9573746f726167652e676f6f676c65617069732e636f6d"
 
-# Host:port pair to bind the built-in stats HTTP API server.
-# GET /stats returns per-user connection counts and traffic.
-# If not set, the stats API is not started.
+# Host:port pair to bind the built-in management HTTP API server.
+# If not set, the API server is not started. Bind it to a loopback address
+# (127.0.0.1) unless you set api-token below, since the API can mutate secrets.
+# Endpoints:
+#   GET    /stats            per-user connection counts and traffic
+#   POST   /reload           re-read [secrets], ad-tag and [secret-ad-tags] from this file
+#   GET    /secrets          list secrets (name, secret, host, ad_tag, effective_ad_tag)
+#   POST   /secrets          add/update one secret: {"name","secret","ad_tag"?}
+#   PUT    /secrets          replace the whole set: {"secrets":{name:{secret,ad_tag?}},"ad_tag"?}
+#   DELETE /secrets/{name}   remove one secret
+#   GET    /adtag            read the global ad-tag: {"ad_tag": "<hex>"|null}
+#   PUT    /adtag            set the global ad-tag: {"ad_tag":"<32 hex chars>"}
+#   DELETE /adtag            clear the global ad-tag
+# Note: direct API mutations are in-memory only; a later POST /reload (or a
+# restart) re-reads this file and overrides them.
 # api-bind-to = "127.0.0.1:9090"
+
+# Optional bearer token guarding EVERY API endpoint above. When set, requests
+# must carry "Authorization: Bearer <token>". When unset (default), the API is
+# unauthenticated and relies on the loopback bind above.
+# api-token = "change-me"
+
+# Telegram advertising tag (ad_tag / proxy tag). When set, matching clients are
+# routed through Telegram middle proxies so a sponsored channel appears at the
+# top of their chat list. Register your proxy with @MTProxybot to obtain a tag;
+# it is a 32-character hex string (16 bytes). Requires public-ipv4/public-ipv6
+# (below) to be reachable. Applies to every secret unless overridden in
+# [secret-ad-tags]. Leave unset to connect directly to the DCs (no advertising).
+# ad-tag = "0123456789abcdef0123456789abcdef"
 
 # Host:port pair(s) to run proxy on (required).
 # The host part must be a literal IP address; hostnames and "*" are rejected.
@@ -62,9 +87,10 @@ concurrency = 8192
 prefer-ip = "prefer-ipv6"
 
 # Public IP addresses of this server. Used by 'mtg access' to generate
-# proxy links and by 'mtg doctor' to validate SNI-DNS match.
-# If not set, mtg tries to detect them automatically via ifconfig.co.
-# Set these if ifconfig.co is unreachable from your server.
+# proxy links, by 'mtg doctor' to validate SNI-DNS match, and — when ad-tag is
+# set — as this proxy's own address in the middle-proxy RPC handshake and
+# RPC_PROXY_REQ. Set them if the server sits behind NAT/is multi-homed or if
+# ifconfig.co is unreachable from your server.
 # public-ipv4 = "1.2.3.4"
 # public-ipv6 = "2001:db8::1"
 
@@ -130,6 +156,14 @@ allow-fallback-on-unknown-dc = false
 # [secrets]
 # alice = "ee367a189aee18fa31c190054efd4a8e9573746f726167652e676f6f676c65617069732e636f6d"
 # bob = "ee0123456789abcdef0123456789abcd9573746f726167652e676f6f676c65617069732e636f6d"
+
+# Optional per-secret advertising tag overrides. Each key is a secret name from
+# [secrets] and each value is a 32-character hex (16-byte) ad_tag. A secret
+# listed here uses its own tag instead of the global ad-tag; a secret not listed
+# falls back to the global ad-tag (if any). Register each host:port + secret in
+# @MTProxybot separately to get a distinct tag.
+# [secret-ad-tags]
+# bob = "fedcba9876543210fedcba9876543210"
 
 # This section is relevant to communication with fronting domain. Usually
 # you do not need to setup anything here but there are plenty of cases, especially

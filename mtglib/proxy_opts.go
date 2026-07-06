@@ -1,8 +1,27 @@
 package mtglib
 
 import (
+	"net"
 	"time"
 )
+
+// SecretConfig is the full set of runtime-swappable secret state produced by a
+// SecretsReloader: the named secrets plus the optional advertising tags. It is
+// what POST /reload re-reads from the config file and what the management API
+// mutators build before an atomic swap.
+type SecretConfig struct {
+	// Secrets is the name->secret map. It must be non-empty and every secret
+	// must be valid.
+	Secrets map[string]Secret
+
+	// SecretAdTags carries optional per-secret advertising tag overrides keyed
+	// by secret name. A name absent here falls back to GlobalAdTag.
+	SecretAdTags map[string][AdTagLength]byte
+
+	// GlobalAdTag is the advertising tag applied to any secret without an
+	// override. nil means no advertising (the direct-DC path).
+	GlobalAdTag *[AdTagLength]byte
+}
 
 // ProxyOpts is a structure with settings to mtg proxy.
 //
@@ -206,14 +225,50 @@ type ProxyOpts struct {
 	// This is an optional setting.
 	ThrottleCheckInterval time.Duration
 
-	// SecretsReloader re-reads the desired secret set from its source (for the
-	// CLI, the config file passed to `mtg run`). When set, a POST to /reload on
-	// the stats API triggers Proxy.ReloadSecrets, which calls this and swaps the
-	// secret set in without a restart. When nil, /reload reports the capability
-	// is unavailable and the proxy behaves exactly as before.
+	// SecretsReloader re-reads the desired secret configuration from its source
+	// (for the CLI, the config file passed to `mtg run`). When set, a POST to
+	// /reload on the stats API triggers Proxy.ReloadSecrets, which calls this
+	// and swaps the secret set (and advertising tags) in without a restart.
+	// When nil, /reload reports the capability is unavailable and the proxy
+	// behaves exactly as before.
 	//
 	// This is an optional setting.
-	SecretsReloader func() (map[string]Secret, error)
+	SecretsReloader func() (SecretConfig, error)
+
+	// GlobalAdTag is the advertising tag (ad_tag from @MTProxybot) applied to
+	// every secret without a per-secret override. When set, matching clients
+	// are routed through Telegram middle proxies so a sponsored channel is
+	// shown. nil disables advertising globally.
+	//
+	// This is an optional setting.
+	GlobalAdTag *[AdTagLength]byte
+
+	// SecretAdTags carries per-secret advertising tag overrides keyed by secret
+	// name. A secret listed here uses its own tag instead of GlobalAdTag.
+	//
+	// This is an optional setting.
+	SecretAdTags map[string][AdTagLength]byte
+
+	// PublicIPv4 and PublicIPv6 advertise this proxy's externally reachable
+	// addresses. They are used as the proxy's own address in the middle-proxy
+	// RPC handshake and RPC_PROXY_REQ; required to be correct behind NAT.
+	//
+	// These are optional settings.
+	PublicIPv4 net.IP
+	PublicIPv6 net.IP
+
+	// AdvertisedPort is the port reported as the proxy's own port in
+	// RPC_PROXY_REQ. Usually the first bind port.
+	//
+	// This is an optional setting.
+	AdvertisedPort int
+
+	// APIToken, when non-empty, requires every management-API request to carry
+	// an "Authorization: Bearer <token>" header. Empty keeps the API
+	// unauthenticated (relying on the localhost-bind convention).
+	//
+	// This is an optional setting.
+	APIToken string
 }
 
 func (p ProxyOpts) valid() error {

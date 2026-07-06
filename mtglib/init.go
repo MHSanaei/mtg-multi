@@ -63,6 +63,14 @@ var (
 	// built without a SecretsReloader, so there is no source to re-read the
 	// secret set from (for example, simple-run mode with no config file).
 	ErrReloaderNotConfigured = errors.New("secrets reloader is not configured")
+
+	// ErrSecretNotFound is returned by DeleteSecret when no secret with the
+	// requested name exists in the active set.
+	ErrSecretNotFound = errors.New("secret not found")
+
+	// ErrLastSecret is returned by DeleteSecret when removing the named secret
+	// would leave the proxy with no secrets at all.
+	ErrLastSecret = errors.New("cannot delete the last secret")
 )
 
 const (
@@ -100,6 +108,11 @@ const (
 	// SecretKeyLength defines a length of the secret bytes used by Telegram and a
 	// proxy.
 	SecretKeyLength = 16
+
+	// AdTagLength defines the length in bytes of a Telegram advertising tag
+	// (the ad_tag / proxy tag issued by @MTProxybot). It is carried in the
+	// RPC_PROXY_REQ message sent to a Telegram middle proxy.
+	AdTagLength = 16
 
 	// ConnectionIDBytesLength defines a count of random bytes used to generate a
 	// stream/connection ids.

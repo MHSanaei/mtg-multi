@@ -164,6 +164,42 @@ func (suite *ConfigTestSuite) TestDomainFrontingNotSet() {
 	suite.Equal("", conf.GetDomainFrontingHost())
 }
 
+func (suite *ConfigTestSuite) TestParseAdTag() {
+	conf, err := config.Parse(suite.ReadConfig("adtag.toml"))
+	suite.Require().NoError(err)
+	suite.NoError(conf.Validate())
+
+	global := conf.GetAdTag()
+	suite.Require().NotNil(global)
+	suite.Equal("0123456789abcdef0123456789abcdef", conf.AdTag.String())
+
+	suite.Equal("s3cr3t", conf.GetAPIToken())
+
+	perSecret := conf.GetSecretAdTags()
+	suite.Require().Contains(perSecret, "bob")
+	suite.NotContains(perSecret, "alice")
+}
+
+func (suite *ConfigTestSuite) TestParseAdTagBadLength() {
+	_, err := config.Parse([]byte("bind-to = \"0.0.0.0:3128\"\nsecret = \"7oe1GqLy6TBc38CV3jx7q09nb29nbGUuY29t\"\nad-tag = \"abcd\"\n"))
+	suite.Error(err)
+}
+
+func (suite *ConfigTestSuite) TestValidateAdTagUnknownSecret() {
+	conf, err := config.Parse(suite.ReadConfig("adtag_unknown_secret.toml"))
+	suite.Require().NoError(err)
+	suite.Error(conf.Validate())
+}
+
+func (suite *ConfigTestSuite) TestParseMinimalNoAdTag() {
+	conf, err := config.Parse(suite.ReadConfig("minimal.toml"))
+	suite.Require().NoError(err)
+	suite.NoError(conf.Validate())
+	suite.Nil(conf.GetAdTag())
+	suite.Nil(conf.GetSecretAdTags())
+	suite.Equal("", conf.GetAPIToken())
+}
+
 func TestConfig(t *testing.T) {
 	t.Parallel()
 	suite.Run(t, &ConfigTestSuite{})

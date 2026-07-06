@@ -26,6 +26,9 @@ type Config struct {
 	AllowFallbackOnUnknownDC    TypeBool                 `json:"allowFallbackOnUnknownDc"`
 	Secret                      mtglib.Secret            `json:"secret"`
 	Secrets                     map[string]mtglib.Secret `json:"secrets"`
+	AdTag                       TypeAdTag                `json:"adTag"`
+	SecretAdTags                map[string]TypeAdTag     `json:"secretAdTags"`
+	APIToken                    string                   `json:"apiToken"`
 	BindTo                      []TypeHostPort           `json:"bindTo"`
 	ProxyProtocolListener       TypeBool                 `json:"proxyProtocolListener"`
 	PreferIP                    TypePreferIP             `json:"preferIp"`
@@ -164,6 +167,36 @@ func (c *Config) Validate() error {
 		seen[v] = struct{}{}
 	}
 
+	if err := c.validateAdTags(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateAdTags ensures every [secret-ad-tags] entry names a secret that
+// actually exists. Tag byte-length is already enforced at parse time by
+// TypeAdTag.Set, so here we only guard against typos in the secret name.
+func (c *Config) validateAdTags() error {
+	if len(c.SecretAdTags) == 0 {
+		return nil
+	}
+
+	known := make(map[string]struct{}, len(c.Secrets)+1)
+	if len(c.Secrets) > 0 {
+		for name := range c.Secrets {
+			known[name] = struct{}{}
+		}
+	} else {
+		known["default"] = struct{}{}
+	}
+
+	for name := range c.SecretAdTags {
+		if _, ok := known[name]; !ok {
+			return fmt.Errorf("secret-ad-tags refers to unknown secret %q", name)
+		}
+	}
+
 	return nil
 }
 
@@ -175,6 +208,35 @@ func (c *Config) GetSecrets() map[string]mtglib.Secret {
 	}
 
 	return map[string]mtglib.Secret{"default": c.Secret}
+}
+
+// GetAdTag returns the global advertising tag, or nil when none is configured.
+func (c *Config) GetAdTag() *[mtglib.AdTagLength]byte {
+	return c.AdTag.Get()
+}
+
+// GetSecretAdTags returns the per-secret advertising tag overrides keyed by
+// secret name, or nil when none are configured.
+func (c *Config) GetSecretAdTags() map[string][mtglib.AdTagLength]byte {
+	if len(c.SecretAdTags) == 0 {
+		return nil
+	}
+
+	out := make(map[string][mtglib.AdTagLength]byte, len(c.SecretAdTags))
+
+	for name, tag := range c.SecretAdTags {
+		if t := tag.Get(); t != nil {
+			out[name] = *t
+		}
+	}
+
+	return out
+}
+
+// GetAPIToken returns the bearer token guarding the management API, or an empty
+// string when the API should stay unauthenticated (localhost-bind convention).
+func (c *Config) GetAPIToken() string {
+	return c.APIToken
 }
 
 // GetBindAddrs returns all bind addresses as strings.

@@ -19,6 +19,7 @@ type streamContext struct {
 	dc               int
 	matchedSecretKey []byte
 	secretName       string
+	adTag            *[AdTagLength]byte
 	logger           Logger
 }
 

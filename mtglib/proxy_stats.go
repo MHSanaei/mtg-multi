@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
+	"maps"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -182,9 +182,7 @@ func computeFairCaps(userConns map[string]int64, limit int64) map[string]int64 {
 	}
 
 	remaining := make(map[string]int64, len(userConns))
-	for k, v := range userConns {
-		remaining[k] = v
-	}
+	maps.Copy(remaining, userConns)
 
 	budget := limit
 	caps := make(map[string]int64)
@@ -271,9 +269,7 @@ func (s *ProxyStats) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var capsCopy map[string]int64
 		if len(s.throttleCaps) > 0 {
 			capsCopy = make(map[string]int64, len(s.throttleCaps))
-			for k, v := range s.throttleCaps {
-				capsCopy[k] = v
-			}
+			maps.Copy(capsCopy, s.throttleCaps)
 		}
 
 		s.throttleMu.RUnlock()
@@ -300,42 +296,10 @@ func (s *ProxyStats) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// StartServer starts an HTTP server for the stats API in a background
-// goroutine. It serves GET /stats and, when reload is non-nil, POST /reload to
-// hot-swap the secret set. The server is shut down when ctx is cancelled.
-func (s *ProxyStats) StartServer(ctx context.Context, bindTo string, logger Logger, reload func() error) {
-	mux := http.NewServeMux()
-	mux.Handle("/stats", s)
-	mux.HandleFunc("/reload", reloadHandler(reload, logger))
-
-	srv := &http.Server{
-		Addr:    bindTo,
-		Handler: mux,
-	}
-
-	ln, err := net.Listen("tcp", bindTo)
-	if err != nil {
-		logger.WarningError("cannot start stats API listener", err)
-		return
-	}
-
-	go func() {
-		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-			logger.WarningError("stats API server error", err)
-		}
-	}()
-
-	go func() {
-		<-ctx.Done()
-
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second) //nolint: mnd
-		defer cancel()
-
-		srv.Shutdown(shutdownCtx) //nolint: errcheck
-	}()
-
-	logger.BindStr("bind", bindTo).Info("Stats API server started")
-}
+// The management HTTP API (GET /stats, POST /reload, /secrets and /adtag
+// routes) is served by (*Proxy).startAPIServer in proxy_api.go, which builds a
+// mux with access to the whole proxy. reloadHandler below is shared by that
+// server for the /reload route.
 
 // reloadHandler answers POST /reload by running reload and reporting the
 // outcome: 200 on success, 405 for a non-POST, 503 when the proxy has no

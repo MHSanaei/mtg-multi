@@ -14,6 +14,7 @@ import (
 	"github.com/mhsanaei/mtg-multi/essentials"
 	"github.com/mhsanaei/mtg-multi/mtglib/internal/dc"
 	"github.com/mhsanaei/mtg-multi/mtglib/internal/doppel"
+	"github.com/mhsanaei/mtg-multi/mtglib/internal/middleproxy"
 	"github.com/mhsanaei/mtg-multi/mtglib/internal/relay"
 	"github.com/mhsanaei/mtg-multi/mtglib/internal/tls"
 	"github.com/mhsanaei/mtg-multi/mtglib/internal/tls/fake"
@@ -31,12 +32,53 @@ type secretSet struct {
 	secrets   []Secret
 	names     []string
 	hostnames []string
+	// adTags[i] is the per-secret advertising tag override for secrets[i], or
+	// nil when that secret has no override; globalAdTag applies to any secret
+	// without an override, or nil when no advertising is configured.
+	adTags      []*[AdTagLength]byte
+	globalAdTag *[AdTagLength]byte
+}
+
+// effectiveAdTag returns the advertising tag that applies to secrets[i]: the
+// per-secret override if present, otherwise the global tag, otherwise nil (the
+// direct-DC path).
+func (s *secretSet) effectiveAdTag(i int) *[AdTagLength]byte {
+	if i < len(s.adTags) && s.adTags[i] != nil {
+		return s.adTags[i]
+	}
+
+	return s.globalAdTag
+}
+
+// toConfig reconstructs a mutable SecretConfig from the immutable snapshot. It
+// is the copy-on-write starting point for the management-API mutators, which
+// apply a delta and swap the result back in.
+func (s *secretSet) toConfig() SecretConfig {
+	secrets := make(map[string]Secret, len(s.names))
+
+	var perSecret map[string][AdTagLength]byte
+
+	for i, name := range s.names {
+		secrets[name] = s.secrets[i]
+
+		if s.adTags[i] != nil {
+			if perSecret == nil {
+				perSecret = make(map[string][AdTagLength]byte)
+			}
+
+			perSecret[name] = *s.adTags[i]
+		}
+	}
+
+	return SecretConfig{Secrets: secrets, SecretAdTags: perSecret, GlobalAdTag: s.globalAdTag}
 }
 
 // buildSecretSet turns a name->secret map into an immutable, name-sorted
 // snapshot. Sorting keeps names[i] and secrets[i] aligned and makes the
-// matched index stable across processes for a given secret map.
-func buildSecretSet(secretsMap map[string]Secret) *secretSet {
+// matched index stable across processes for a given secret map. perSecret
+// carries optional per-name advertising tags and global is the fallback tag;
+// both may be nil.
+func buildSecretSet(secretsMap map[string]Secret, perSecret map[string][AdTagLength]byte, global *[AdTagLength]byte) *secretSet {
 	names := make([]string, 0, len(secretsMap))
 	for name := range secretsMap {
 		names = append(names, name)
@@ -45,8 +87,15 @@ func buildSecretSet(secretsMap map[string]Secret) *secretSet {
 	sort.Strings(names)
 
 	secretsList := make([]Secret, 0, len(secretsMap))
-	for _, name := range names {
+	adTags := make([]*[AdTagLength]byte, len(names))
+
+	for i, name := range names {
 		secretsList = append(secretsList, secretsMap[name])
+
+		if tag, ok := perSecret[name]; ok {
+			t := tag
+			adTags[i] = &t
+		}
 	}
 
 	hostnameSet := make(map[string]struct{}, len(secretsList))
@@ -61,7 +110,13 @@ func buildSecretSet(secretsMap map[string]Secret) *secretSet {
 
 	sort.Strings(hostnames)
 
-	return &secretSet{secrets: secretsList, names: names, hostnames: hostnames}
+	return &secretSet{
+		secrets:     secretsList,
+		names:       names,
+		hostnames:   hostnames,
+		adTags:      adTags,
+		globalAdTag: global,
+	}
 }
 
 // Proxy is an MTPROTO proxy structure.
@@ -82,9 +137,14 @@ type Proxy struct {
 	configUpdater               *dc.PublicConfigUpdater
 	doppelGanger                *doppel.Ganger
 
+	middleProxy    *middleproxy.Manager
+	ourIPv4        net.IP
+	ourIPv6        net.IP
+	advertisedPort int
+
 	stats           *ProxyStats
 	secrets         atomic.Pointer[secretSet]
-	reloader        func() (map[string]Secret, error)
+	reloader        func() (SecretConfig, error)
 	reloadMu        sync.Mutex
 	liveMu          sync.Mutex
 	liveConns       map[string]map[*streamContext]struct{}
@@ -269,22 +329,30 @@ func (p *Proxy) ReloadSecrets() error {
 	p.reloadMu.Lock()
 	defer p.reloadMu.Unlock()
 
-	secretsMap, err := p.reloader()
+	cfg, err := p.reloader()
 	if err != nil {
 		return fmt.Errorf("cannot reload secrets: %w", err)
 	}
 
-	if len(secretsMap) == 0 {
+	return p.swapSecretConfigLocked(cfg)
+}
+
+// swapSecretConfigLocked validates cfg, builds a fresh immutable snapshot,
+// swaps it in atomically, pre-registers stats for every name, and closes stale
+// connections. It is the single mutation point shared by ReloadSecrets and the
+// management-API mutators; the caller MUST hold reloadMu.
+func (p *Proxy) swapSecretConfigLocked(cfg SecretConfig) error {
+	if len(cfg.Secrets) == 0 {
 		return ErrSecretInvalid
 	}
 
-	for _, s := range secretsMap {
+	for _, s := range cfg.Secrets {
 		if !s.Valid() {
 			return ErrSecretInvalid
 		}
 	}
 
-	newSet := buildSecretSet(secretsMap)
+	newSet := buildSecretSet(cfg.Secrets, cfg.SecretAdTags, cfg.GlobalAdTag)
 	oldSet := p.secrets.Swap(newSet)
 
 	for _, name := range newSet.names {
@@ -405,6 +473,7 @@ func (p *Proxy) doFakeTLSHandshake(ctx *streamContext) bool {
 	matchedSecret := set.secrets[result.MatchedIndex]
 	ctx.matchedSecretKey = matchedSecret.Key[:]
 	ctx.secretName = set.names[result.MatchedIndex]
+	ctx.adTag = set.effectiveAdTag(result.MatchedIndex)
 	ctx.logger = ctx.logger.BindStr("secret_name", ctx.secretName)
 
 	gangerNoise := p.doppelGanger.NoiseParams()
@@ -439,6 +508,18 @@ func (p *Proxy) doObfuscatedHandshake(ctx *streamContext) error {
 }
 
 func (p *Proxy) doTelegramCall(ctx *streamContext) error {
+	// When this stream carries an advertising tag, route it through a Telegram
+	// middle proxy so a sponsored channel appears. On any failure we log and
+	// fall through to the direct path so the client stays online (availability
+	// is favored over the sponsored channel).
+	if ctx.adTag != nil && p.middleProxy != nil {
+		if err := p.doMiddleProxyCall(ctx); err != nil {
+			ctx.logger.WarningError("cannot route through middle proxy, using direct connection", err)
+		} else {
+			return nil
+		}
+	}
+
 	dcid := ctx.dc
 
 	addresses := p.telegram.GetAddresses(dcid)
@@ -499,6 +580,38 @@ func (p *Proxy) doTelegramCall(ctx *streamContext) error {
 	return nil
 }
 
+// doMiddleProxyCall dials a Telegram middle proxy for the stream's DC and sets
+// ctx.telegramConn to an RPC stream that carries the client's traffic together
+// with the advertising tag. It returns an error (leaving ctx.telegramConn
+// unset) if the middle proxy cannot be reached, so the caller can fall back to
+// a direct connection.
+func (p *Proxy) doMiddleProxyCall(ctx *streamContext) error {
+	clientAddr, _ := ctx.clientConn.RemoteAddr().(*net.TCPAddr)
+
+	stream, middleIP, err := p.middleProxy.DialProxyStream(p.network, middleproxy.DialParams{
+		DC:             ctx.dc,
+		ClientAddr:     clientAddr,
+		PublicIPv4:     p.ourIPv4,
+		PublicIPv6:     p.ourIPv6,
+		AdvertisedPort: p.advertisedPort,
+		AdTag:          *ctx.adTag,
+	})
+	if err != nil {
+		return fmt.Errorf("cannot dial middle proxy: %w", err)
+	}
+
+	ctx.telegramConn = connTraffic{
+		Conn:     stream,
+		streamID: ctx.streamID,
+		stream:   p.eventStream,
+		ctx:      ctx,
+	}
+
+	p.eventStream.Send(ctx, NewEventConnectedToDC(ctx.streamID, middleIP, ctx.dc))
+
+	return nil
+}
+
 func (p *Proxy) doDomainFrontingForHost(ctx *streamContext, conn *connRewind, host string) {
 	p.eventStream.Send(p.ctx, NewEventDomainFronting(ctx.streamID))
 	conn.Rewind()
@@ -549,7 +662,7 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 	logger := opts.getLogger("proxy")
 	updatersLogger := logger.Named("telegram-updaters")
 
-	initialSet := buildSecretSet(opts.getSecrets())
+	initialSet := buildSecretSet(opts.getSecrets(), opts.SecretAdTags, opts.GlobalAdTag)
 
 	stats := NewProxyStats()
 	for _, name := range initialSet.names {
@@ -599,15 +712,35 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 			opts.Network.MakeHTTPClient(nil),
 		),
 		domainFrontingProxyProtocol: opts.DomainFrontingProxyProtocol,
+		ourIPv4:                     opts.PublicIPv4,
+		ourIPv6:                     opts.PublicIPv6,
+		advertisedPort:              opts.AdvertisedPort,
+	}
+
+	// The middle-proxy manager is always available so advertising can be
+	// enabled at runtime via the API. It fetches Telegram's proxy secret and
+	// middle-proxy list lazily (nothing happens until an ad-tagged stream is
+	// dialed), so a proxy without advertising never touches the network. When
+	// advertising is already configured, warm it so the first client is fast.
+	proxy.middleProxy = middleproxy.NewManager(
+		ctx,
+		opts.Network.MakeHTTPClient(nil),
+		updatersLogger.Named("middle-proxy"),
+		opts.getPreferIP(),
+	)
+
+	if opts.GlobalAdTag != nil || len(opts.SecretAdTags) > 0 {
+		proxy.middleProxy.Warm()
 	}
 
 	proxy.secrets.Store(initialSet)
 
-	// Start the stats/reload API only now that the proxy exists, so the
-	// /reload route can drive ReloadSecrets. The two share the api-bind-to
-	// listener; reload is a no-op-with-error when no reloader was supplied.
+	// Start the management API only now that the proxy exists, so the routes
+	// can drive ReloadSecrets and the secrets/adtag mutators. /stats, /reload,
+	// /secrets and /adtag share the api-bind-to listener; reload is a
+	// no-op-with-error when no reloader was supplied.
 	if opts.APIBindTo != "" {
-		stats.StartServer(ctx, opts.APIBindTo, logger, proxy.ReloadSecrets)
+		proxy.startAPIServer(ctx, opts.APIBindTo, opts.APIToken)
 	}
 
 	proxy.doppelGanger.Run()
