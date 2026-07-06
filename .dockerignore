@@ -4,6 +4,5 @@ tags
 .bin/
 *.md
 mtg
-.golangci.toml
 .gitignore
 run.sh

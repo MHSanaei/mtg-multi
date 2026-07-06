@@ -53,11 +53,7 @@ func newMiddleConn(raw essentials.Conn, frame *frameConn, connID [8]byte, adTag 
 func (m *middleConn) Write(p []byte) (int, error) {
 	m.inbuf = append(m.inbuf, p...)
 
-	for {
-		if len(m.inbuf) < 4 {
-			break
-		}
-
+	for len(m.inbuf) >= 4 {
 		length := binary.LittleEndian.Uint32(m.inbuf[:4])
 
 		quickAck := false
