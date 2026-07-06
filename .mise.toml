@@ -5,7 +5,6 @@
 "go:mvdan.cc/gofumpt" = "latest"
 go = "latest"
 golangci-lint = "latest"
-goreleaser = "latest"
 
 [vars]
 fuzzflags = "-fuzztime=120s"
@@ -79,15 +78,6 @@ go build \
     -a \
     -tags netgo
 """
-
-[tasks.release]
-description = "Create release tarballs"
-sources = ["**/*.go", "go.mod", "go.sum", ".goreleaser.yml"]
-run = [
-    "goreleaser --snapshot --clean",
-    "find dist -depth 1 -type d | xargs -r rm -r",
-    "rm ./dist/config.yaml"
-]
 
 [tasks.image]
 description = "Build docker image"
