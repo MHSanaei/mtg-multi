@@ -409,7 +409,7 @@ func fragmentTLSRecord(t testing.TB, full []byte, n int) []byte {
 	chunkSize := len(payload) / n
 	result := &bytes.Buffer{}
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		start := i * chunkSize
 		end := start + chunkSize
 

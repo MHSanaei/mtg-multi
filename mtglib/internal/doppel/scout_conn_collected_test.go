@@ -51,7 +51,7 @@ func (suite *ScoutConnCollectedTestSuite) TestConcurrentAddSnapshot() {
 	go func() {
 		defer wg.Done()
 
-		for i := 0; i < 1000; i++ {
+		for i := range 1000 {
 			collected.Add(tls.TypeApplicationData, i)
 		}
 	}()
@@ -59,7 +59,7 @@ func (suite *ScoutConnCollectedTestSuite) TestConcurrentAddSnapshot() {
 	go func() {
 		defer wg.Done()
 
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			collected.MarkWrite()
 		}
 	}()
@@ -67,7 +67,7 @@ func (suite *ScoutConnCollectedTestSuite) TestConcurrentAddSnapshot() {
 	go func() {
 		defer wg.Done()
 
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			// call Snapshot concurrently to exercise the lock under -race
 			collected.Snapshot() //nolint:errcheck
 		}

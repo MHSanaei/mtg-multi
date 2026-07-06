@@ -144,10 +144,7 @@ func generateNoise(buf *bytes.Buffer, noise NoiseParams) {
 
 	if noise.Mean > 0 && noise.Jitter > 0 {
 		// Calibrated: use measured cert chain size ± jitter.
-		size = noise.Mean - noise.Jitter + rnd.IntN(2*noise.Jitter)
-		if size < 1000 {
-			size = 1000
-		}
+		size = max(noise.Mean-noise.Jitter+rnd.IntN(2*noise.Jitter), 1000)
 	} else {
 		// Legacy fallback: random in 2500-4700 range.
 		size = 2500 + rnd.IntN(2200)

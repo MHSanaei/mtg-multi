@@ -36,7 +36,7 @@ func newConnPayload() *connPayload {
 
 func BenchmarkTLSConnPayload(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = newConnPayload()
 	}
 }
@@ -48,7 +48,7 @@ func TestTLSConnPayloadHeapCost(t *testing.T) {
 	runtime.ReadMemStats(&m1)
 
 	payloads := make([]*connPayload, N)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		payloads[i] = newConnPayload()
 	}
 
@@ -99,7 +99,7 @@ func NewEventTraffic(streamID string, traffic uint, isRead bool) EventTraffic {
 func BenchmarkEventTraffic(b *testing.B) {
 	streamID := "dGVzdC1zdHJlYW0taWQ"
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = NewEventTraffic(streamID, 1024, true)
 	}
 }
@@ -109,8 +109,8 @@ func BenchmarkEventTraffic(b *testing.B) {
 func BenchmarkEventTrafficInterface(b *testing.B) {
 	streamID := "dGVzdC1zdHJlYW0taWQ"
 	b.ReportAllocs()
-	var sink interface{}
-	for i := 0; i < b.N; i++ {
+	var sink any
+	for b.Loop() {
 		sink = NewEventTraffic(streamID, 1024, true)
 	}
 	runtime.KeepAlive(sink)
@@ -124,8 +124,8 @@ func TestEventTrafficAllocRate(t *testing.T) {
 	var m1, m2 runtime.MemStats
 	runtime.ReadMemStats(&m1)
 
-	var sink interface{}
-	for i := 0; i < iterations; i++ {
+	var sink any
+	for range iterations {
 		// Simulate what connTraffic.Read does: create event and pass to Send
 		sink = NewEventTraffic(streamID, 1024, true)
 	}
@@ -155,7 +155,7 @@ func TestEventTrafficAllocRate(t *testing.T) {
 
 func BenchmarkConnRewindBuffer(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		var buf bytes.Buffer
 		// Simulate TLS ClientHello being recorded. Typical ClientHello
 		// is 200-600 bytes; we use 512 as a representative size.
@@ -180,7 +180,7 @@ func TestConnRewindBufferCost(t *testing.T) {
 
 		bufs := make([]bytes.Buffer, N)
 		data := make([]byte, size)
-		for i := 0; i < N; i++ {
+		for i := range N {
 			bufs[i].Write(data)
 		}
 
@@ -202,7 +202,7 @@ func TestConnRewindBufferCost(t *testing.T) {
 
 	bufs := make([]bytes.Buffer, N)
 	data := make([]byte, typicalSize)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		bufs[i].Write(data)
 	}
 
@@ -235,14 +235,14 @@ func generateStreamIDStack() string {
 
 func BenchmarkStreamIDHeap(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = generateStreamIDHeap()
 	}
 }
 
 func BenchmarkStreamIDStack(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = generateStreamIDStack()
 	}
 }
@@ -255,7 +255,7 @@ func TestStreamIDAllocCost(t *testing.T) {
 	var m1, m2 runtime.MemStats
 	runtime.ReadMemStats(&m1)
 	heapIDs := make([]string, N)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		heapIDs[i] = generateStreamIDHeap()
 	}
 	runtime.ReadMemStats(&m2)
@@ -266,7 +266,7 @@ func TestStreamIDAllocCost(t *testing.T) {
 	runtime.GC()
 	runtime.ReadMemStats(&m1)
 	stackIDs := make([]string, N)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		stackIDs[i] = generateStreamIDStack()
 	}
 	runtime.ReadMemStats(&m2)
@@ -301,7 +301,7 @@ func TestCombinedSummary(t *testing.T) {
 	var m1, m2 runtime.MemStats
 	runtime.ReadMemStats(&m1)
 	payloads := make([]*connPayload, N)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		payloads[i] = newConnPayload()
 	}
 	runtime.ReadMemStats(&m2)
@@ -312,7 +312,7 @@ func TestCombinedSummary(t *testing.T) {
 	runtime.ReadMemStats(&m1)
 	bufs := make([]bytes.Buffer, N)
 	data := make([]byte, 512)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		bufs[i].Write(data)
 	}
 	runtime.ReadMemStats(&m2)
@@ -322,7 +322,7 @@ func TestCombinedSummary(t *testing.T) {
 	runtime.GC()
 	runtime.ReadMemStats(&m1)
 	ids := make([]string, N)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		ids[i] = generateStreamIDHeap()
 	}
 	runtime.ReadMemStats(&m2)
@@ -331,8 +331,8 @@ func TestCombinedSummary(t *testing.T) {
 	// 4. EventTraffic per op (interface escape)
 	runtime.GC()
 	runtime.ReadMemStats(&m1)
-	var sink interface{}
-	for i := 0; i < N; i++ {
+	var sink any
+	for range N {
 		sink = NewEventTraffic("test", 1024, true)
 	}
 	runtime.ReadMemStats(&m2)

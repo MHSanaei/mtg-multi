@@ -22,9 +22,7 @@ var sink byte
 // from 2KB -> 32KB.
 func stackGoroutineRealistic(done <-chan struct{}, wg *sync.WaitGroup, payload []byte) {
 	// goroutine 1: start() with 16KB stack buffer, actually used
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		var buf [maxRecordSize]byte
 		// Simulate the write path in doppel start():
 		//   n, _ := c.p.writeStream.Read(buf[tls.SizeHeader : tls.SizeHeader+size])
@@ -32,12 +30,10 @@ func stackGoroutineRealistic(done <-chan struct{}, wg *sync.WaitGroup, payload [
 		copy(buf[sizeHeader:], payload)
 		<-done
 		runtime.KeepAlive(&buf)
-	}()
+	})
 
 	// goroutine 2: clock tick loop
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		ticker := time.NewTicker(50 * time.Millisecond)
 		defer ticker.Stop()
 		for {
@@ -47,7 +43,7 @@ func stackGoroutineRealistic(done <-chan struct{}, wg *sync.WaitGroup, payload [
 			case <-ticker.C:
 			}
 		}
-	}()
+	})
 }
 
 var bufPool = sync.Pool{
@@ -60,21 +56,17 @@ var bufPool = sync.Pool{
 // poolGoroutineRealistic simulates the same pair with pool-based buffer.
 func poolGoroutineRealistic(done <-chan struct{}, wg *sync.WaitGroup, payload []byte) {
 	// goroutine 1: start() with pooled buffer
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		bp := bufPool.Get().(*[]byte)
 		buf := *bp
 		copy(buf[sizeHeader:], payload)
 		defer bufPool.Put(bp)
 		<-done
 		runtime.KeepAlive(&buf)
-	}()
+	})
 
 	// goroutine 2: clock tick loop
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		ticker := time.NewTicker(50 * time.Millisecond)
 		defer ticker.Stop()
 		for {
@@ -84,7 +76,7 @@ func poolGoroutineRealistic(done <-chan struct{}, wg *sync.WaitGroup, payload []
 			case <-ticker.C:
 			}
 		}
-	}()
+	})
 }
 
 // measureMem forces GC and returns MemStats.
@@ -117,15 +109,13 @@ func TestDoppelStackGrowthMechanism(t *testing.T) {
 
 		done := make(chan struct{})
 		var wg sync.WaitGroup
-		for i := 0; i < N; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range N {
+			wg.Go(func() {
 				var buf [maxRecordSize]byte
 				buf[0] = 1
 				<-done
 				runtime.KeepAlive(&buf)
-			}()
+			})
 		}
 		time.Sleep(200 * time.Millisecond)
 		after := measureMem()
@@ -148,15 +138,13 @@ func TestDoppelStackGrowthMechanism(t *testing.T) {
 
 		done := make(chan struct{})
 		var wg sync.WaitGroup
-		for i := 0; i < N; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range N {
+			wg.Go(func() {
 				var buf [maxRecordSize]byte
 				copy(buf[sizeHeader:], payload)
 				<-done
 				runtime.KeepAlive(&buf)
-			}()
+			})
 		}
 		time.Sleep(200 * time.Millisecond)
 		after := measureMem()
@@ -179,17 +167,15 @@ func TestDoppelStackGrowthMechanism(t *testing.T) {
 
 		done := make(chan struct{})
 		var wg sync.WaitGroup
-		for i := 0; i < N; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range N {
+			wg.Go(func() {
 				bp := bufPool.Get().(*[]byte)
 				buf := *bp
 				copy(buf[sizeHeader:], payload)
 				defer bufPool.Put(bp)
 				<-done
 				runtime.KeepAlive(&buf)
-			}()
+			})
 		}
 		time.Sleep(200 * time.Millisecond)
 		after := measureMem()
@@ -227,7 +213,7 @@ func TestDoppelCombinedOverhead(t *testing.T) {
 
 				done := make(chan struct{})
 				var wg sync.WaitGroup
-				for i := 0; i < n; i++ {
+				for range n {
 					stackGoroutineRealistic(done, &wg, payload)
 				}
 				time.Sleep(200 * time.Millisecond)
@@ -258,7 +244,7 @@ func TestDoppelCombinedOverhead(t *testing.T) {
 
 				done := make(chan struct{})
 				var wg sync.WaitGroup
-				for i := 0; i < n; i++ {
+				for range n {
 					poolGoroutineRealistic(done, &wg, payload)
 				}
 				time.Sleep(200 * time.Millisecond)

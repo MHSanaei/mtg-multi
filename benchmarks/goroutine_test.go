@@ -45,7 +45,7 @@ func TestIdleGoroutineMemory(t *testing.T) {
 			goroutinesBefore := runtime.NumGoroutine()
 
 			wg.Add(n)
-			for i := 0; i < n; i++ {
+			for range n {
 				go func() {
 					wg.Done()
 					<-blocker
@@ -95,7 +95,7 @@ func TestGrownStackGoroutineMemory(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 			before := memUsage()
 
-			for i := 0; i < n; i++ {
+			for range n {
 				go func() {
 					ready <- struct{}{}
 					growStack(8, blocker) // ~8 KiB of stack frames
@@ -131,7 +131,7 @@ func TestAfterFuncNoGoroutineUntilCancel(t *testing.T) {
 	cancels := make([]context.CancelFunc, N)
 	stops := make([]func() bool, N)
 
-	for i := 0; i < N; i++ {
+	for i := range N {
 		ctxs[i], cancels[i] = context.WithCancel(context.Background())
 		stops[i] = context.AfterFunc(ctxs[i], func() {
 			// noop callback
@@ -149,7 +149,7 @@ func TestAfterFuncNoGoroutineUntilCancel(t *testing.T) {
 	}
 
 	// Now cancel all contexts and check goroutines spike momentarily
-	for i := 0; i < N; i++ {
+	for i := range N {
 		cancels[i]()
 	}
 	runtime.Gosched()
@@ -177,7 +177,7 @@ func TestMemoryGoroutinesVsAfterFunc(t *testing.T) {
 	beforeG := memUsage()
 
 	wg.Add(N)
-	for i := 0; i < N; i++ {
+	for range N {
 		ctx, cancel := context.WithCancel(context.Background())
 		_ = cancel
 		go func() {
@@ -199,7 +199,7 @@ func TestMemoryGoroutinesVsAfterFunc(t *testing.T) {
 	beforeAF := memUsage()
 
 	cancels := make([]context.CancelFunc, N)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		var cancel context.CancelFunc
 		var ctx context.Context
 		ctx, cancel = context.WithCancel(context.Background())
@@ -227,7 +227,7 @@ func TestMemoryGoroutinesVsAfterFunc(t *testing.T) {
 // -------------------------------------------------------
 
 func BenchmarkIdleGoroutine(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
 		go func() {
@@ -240,7 +240,7 @@ func BenchmarkIdleGoroutine(b *testing.B) {
 }
 
 func BenchmarkAfterFunc(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
 		context.AfterFunc(ctx, func() {
@@ -267,7 +267,7 @@ func TestProjectedSavings(t *testing.T) {
 	before := memUsage()
 
 	wg.Add(sampleSize)
-	for i := 0; i < sampleSize; i++ {
+	for range sampleSize {
 		go func() {
 			wg.Done()
 			<-blocker

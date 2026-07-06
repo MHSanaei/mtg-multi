@@ -68,10 +68,7 @@ func makeTLSStream(totalBytes, recordPayloadSize int) []byte {
 		if remaining <= 0 {
 			break
 		}
-		pSize := recordPayloadSize
-		if remaining < pSize {
-			pSize = remaining
-		}
+		pSize := min(remaining, recordPayloadSize)
 		rec := makeTLSRecord(payload[:pSize])
 		buf.Write(rec)
 	}
@@ -249,10 +246,7 @@ func BenchmarkMediaDownload_MTU(b *testing.B) {
 					rand.Read(data)
 					written := 0
 					for written < totalPayload {
-						toWrite := mtuSize
-						if totalPayload-written < toWrite {
-							toWrite = totalPayload - written
-						}
+						toWrite := min(totalPayload-written, mtuSize)
 						serverConn.Write(data[:toWrite])
 						written += toWrite
 					}
@@ -325,7 +319,7 @@ func BenchmarkSmallMessages_TelegramToClient(b *testing.B) {
 				go func() {
 					msg := make([]byte, msgSize)
 					rand.Read(msg)
-					for j := 0; j < numMsgs; j++ {
+					for range numMsgs {
 						serverConn.Write(msg)
 					}
 					serverConn.Close()
@@ -352,7 +346,7 @@ func BenchmarkSmallMessages_ClientToTelegram(b *testing.B) {
 			var streamBuf bytes.Buffer
 			msg := make([]byte, msgSize)
 			rand.Read(msg)
-			for j := 0; j < numMsgs; j++ {
+			for range numMsgs {
 				streamBuf.Write(makeTLSRecord(msg))
 			}
 			stream := streamBuf.Bytes()
@@ -459,8 +453,7 @@ func BenchmarkCPU_PoolGetPut(b *testing.B) {
 		pool.Put(item)
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		bp := pool.Get().(*[]byte)
 		pool.Put(bp)
 	}
@@ -468,7 +461,7 @@ func BenchmarkCPU_PoolGetPut(b *testing.B) {
 
 // BenchmarkCPU_StackAlloc measures the cost of stack-allocating the buffer.
 func BenchmarkCPU_StackAlloc(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		var buf [tls.MaxRecordPayloadSize]byte
 		sinkByte = buf[0]
 		sinkByte = buf[len(buf)-1]

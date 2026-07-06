@@ -46,10 +46,8 @@ func runStressTest(b *testing.B, numConns, dataPerConn int, getBuf func() []byte
 	start := time.Now()
 
 	// Launch all connections concurrently
-	for i := 0; i < numConns; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range numConns {
+		wg.Go(func() {
 
 			serverConn, clientConn := net.Pipe()
 
@@ -58,10 +56,7 @@ func runStressTest(b *testing.B, numConns, dataPerConn int, getBuf func() []byte
 				data := make([]byte, 32*1024) // write in 32KB chunks
 				written := 0
 				for written < dataPerConn {
-					toWrite := len(data)
-					if dataPerConn-written < toWrite {
-						toWrite = dataPerConn - written
-					}
+					toWrite := min(dataPerConn-written, len(data))
 					n, err := serverConn.Write(data[:toWrite])
 					written += n
 					if err != nil {
@@ -77,7 +72,7 @@ func runStressTest(b *testing.B, numConns, dataPerConn int, getBuf func() []byte
 			putBuf(buf)
 			totalTransferred.Add(n)
 			clientConn.Close()
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -267,9 +262,7 @@ func BenchmarkStress_TinyPackets(b *testing.B) {
 					start := time.Now()
 
 					for c := 0; c < sc.conns; c++ {
-						wg.Add(1)
-						go func() {
-							defer wg.Done()
+						wg.Go(func() {
 							serverConn, clientConn := net.Pipe()
 
 							go func() {
@@ -295,7 +288,7 @@ func BenchmarkStress_TinyPackets(b *testing.B) {
 							putBuf(buf)
 							totalReads.Add(reads)
 							clientConn.Close()
-						}()
+						})
 					}
 
 					wg.Wait()

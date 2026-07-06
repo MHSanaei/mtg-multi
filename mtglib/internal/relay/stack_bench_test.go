@@ -28,12 +28,12 @@ func BenchmarkStackMemory(b *testing.B) {
 				stop := make(chan struct{})
 
 				wg.Add(numGoroutines)
-				for j := 0; j < numGoroutines; j++ {
+				for range numGoroutines {
 					go blockingReadStack(&wg, ready, stop)
 				}
 
 				// Wait for all goroutines to be ready (holding their buffers)
-				for j := 0; j < numGoroutines; j++ {
+				for range numGoroutines {
 					<-ready
 				}
 
@@ -87,11 +87,11 @@ func benchmarkPoolMemory(b *testing.B, poolBufSize int) {
 				stop := make(chan struct{})
 
 				wg.Add(numGoroutines)
-				for j := 0; j < numGoroutines; j++ {
+				for range numGoroutines {
 					go blockingReadPool(&wg, ready, stop, pool)
 				}
 
-				for j := 0; j < numGoroutines; j++ {
+				for range numGoroutines {
 					<-ready
 				}
 
@@ -132,10 +132,10 @@ func BenchmarkPoolMemory_Burst(b *testing.B) {
 				stop := make(chan struct{})
 
 				wg.Add(500)
-				for j := 0; j < 500; j++ {
+				for range 500 {
 					go blockingReadPool(&wg, ready, stop, pool)
 				}
-				for j := 0; j < 500; j++ {
+				for range 500 {
 					<-ready
 				}
 				close(stop)
@@ -150,10 +150,10 @@ func BenchmarkPoolMemory_Burst(b *testing.B) {
 				stop2 := make(chan struct{})
 
 				wg.Add(500)
-				for j := 0; j < 500; j++ {
+				for range 500 {
 					go blockingReadPool(&wg, ready2, stop2, pool)
 				}
-				for j := 0; j < 500; j++ {
+				for range 500 {
 					<-ready2
 				}
 

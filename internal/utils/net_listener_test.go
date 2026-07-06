@@ -137,10 +137,8 @@ func (suite *MultiListenerTestSuite) TestConcurrentAccept() {
 
 	for _, l := range listeners {
 		for range connsPerListener {
-			wg.Add(1)
 
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 
 				conn, err := net.Dial("tcp", l.Addr().String())
 				if err != nil {
@@ -148,7 +146,7 @@ func (suite *MultiListenerTestSuite) TestConcurrentAccept() {
 				}
 
 				conn.Close() //nolint: errcheck
-			}()
+			})
 		}
 	}
 

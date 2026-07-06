@@ -196,10 +196,8 @@ func runTest(strat bufStrategy, conns int, dataPerConn int64, reportInterval tim
 		}
 	}()
 
-	for i := 0; i < conns; i++ {
-		clientWg.Add(1)
-		go func() {
-			defer clientWg.Done()
+	for range conns {
+		clientWg.Go(func() {
 			<-startSignal
 
 			conn, err := net.Dial("tcp", relayAddr)
@@ -237,7 +235,7 @@ func runTest(strat bufStrategy, conns int, dataPerConn int64, reportInterval tim
 				}
 				totalBytes.Add(int64(n * 2)) // write + read
 			}
-		}()
+		})
 	}
 
 	start := time.Now()
