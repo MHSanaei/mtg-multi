@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/dolonet/mtg-multi/essentials"
-	"github.com/dolonet/mtg-multi/mtglib"
+	"github.com/mhsanaei/mtg-multi/essentials"
+	"github.com/mhsanaei/mtg-multi/mtglib"
 )
 
 func getIP(ntw mtglib.Network, protocol string) net.IP {

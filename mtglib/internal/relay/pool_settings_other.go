@@ -2,7 +2,7 @@
 
 package relay
 
-import "github.com/dolonet/mtg-multi/mtglib/internal/tls"
+import "github.com/mhsanaei/mtg-multi/mtglib/internal/tls"
 
 const (
 	bufPoolSize = tls.MaxRecordPayloadSize

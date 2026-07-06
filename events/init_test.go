@@ -1,7 +1,7 @@
 package events_test
 
 import (
-	"github.com/dolonet/mtg-multi/mtglib"
+	"github.com/mhsanaei/mtg-multi/mtglib"
 	"github.com/stretchr/testify/mock"
 )
 

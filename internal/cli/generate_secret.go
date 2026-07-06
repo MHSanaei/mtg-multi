@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 
-	"github.com/dolonet/mtg-multi/mtglib"
+	"github.com/mhsanaei/mtg-multi/mtglib"
 )
 
 type GenerateSecret struct {

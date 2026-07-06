@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dolonet/mtg-multi/essentials"
-	"github.com/dolonet/mtg-multi/mtglib/internal/tls"
+	"github.com/mhsanaei/mtg-multi/essentials"
+	"github.com/mhsanaei/mtg-multi/mtglib/internal/tls"
 )
 
 // ScoutResult holds measurements from a single scout HTTP request.

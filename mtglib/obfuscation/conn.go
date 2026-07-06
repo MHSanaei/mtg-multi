@@ -3,7 +3,7 @@ package obfuscation
 import (
 	"crypto/cipher"
 
-	"github.com/dolonet/mtg-multi/essentials"
+	"github.com/mhsanaei/mtg-multi/essentials"
 )
 
 type conn struct {

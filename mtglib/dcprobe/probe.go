@@ -23,8 +23,8 @@ import (
 	"net"
 	"time"
 
-	"github.com/dolonet/mtg-multi/essentials"
-	"github.com/dolonet/mtg-multi/mtglib/obfuscation"
+	"github.com/mhsanaei/mtg-multi/essentials"
+	"github.com/mhsanaei/mtg-multi/mtglib/obfuscation"
 )
 
 // MTProto wire constants (https://core.telegram.org/schema/mtproto).

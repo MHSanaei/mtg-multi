@@ -16,7 +16,7 @@
 // EventStart for that session yet.
 package events
 
-import "github.com/dolonet/mtg-multi/mtglib"
+import "github.com/mhsanaei/mtg-multi/mtglib"
 
 // Observer is an instance that listens for the incoming events.
 //

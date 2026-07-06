@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/dolonet/mtg-multi/events"
-	"github.com/dolonet/mtg-multi/mtglib"
+	"github.com/mhsanaei/mtg-multi/events"
+	"github.com/mhsanaei/mtg-multi/mtglib"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )

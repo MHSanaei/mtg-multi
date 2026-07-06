@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dolonet/mtg-multi/ipblocklist/files"
+	"github.com/mhsanaei/mtg-multi/ipblocklist/files"
 	"github.com/stretchr/testify/suite"
 )
 

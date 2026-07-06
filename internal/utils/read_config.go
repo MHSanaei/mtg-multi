@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dolonet/mtg-multi/internal/config"
+	"github.com/mhsanaei/mtg-multi/internal/config"
 )
 
 func ReadConfig(path string) (*config.Config, error) {

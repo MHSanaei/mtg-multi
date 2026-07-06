@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dolonet/mtg-multi/mtglib"
-	"github.com/dolonet/mtg-multi/mtglib/internal/tls/fake"
+	"github.com/mhsanaei/mtg-multi/mtglib"
+	"github.com/mhsanaei/mtg-multi/mtglib/internal/tls/fake"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"

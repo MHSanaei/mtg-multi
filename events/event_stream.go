@@ -6,7 +6,7 @@ import (
 	"runtime"
 
 	"github.com/OneOfOne/xxhash"
-	"github.com/dolonet/mtg-multi/mtglib"
+	"github.com/mhsanaei/mtg-multi/mtglib"
 )
 
 // EventStream is a default implementation of the [mtglib.EventStream]

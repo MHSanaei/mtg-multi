@@ -15,12 +15,12 @@ import (
 	"time"
 
 	"github.com/beevik/ntp"
-	"github.com/dolonet/mtg-multi/essentials"
-	"github.com/dolonet/mtg-multi/internal/config"
-	"github.com/dolonet/mtg-multi/internal/utils"
-	"github.com/dolonet/mtg-multi/mtglib"
-	"github.com/dolonet/mtg-multi/mtglib/dcprobe"
-	"github.com/dolonet/mtg-multi/network/v2"
+	"github.com/mhsanaei/mtg-multi/essentials"
+	"github.com/mhsanaei/mtg-multi/internal/config"
+	"github.com/mhsanaei/mtg-multi/internal/utils"
+	"github.com/mhsanaei/mtg-multi/mtglib"
+	"github.com/mhsanaei/mtg-multi/mtglib/dcprobe"
+	"github.com/mhsanaei/mtg-multi/network/v2"
 )
 
 var (

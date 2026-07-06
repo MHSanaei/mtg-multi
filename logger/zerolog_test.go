@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dolonet/mtg-multi/logger"
-	"github.com/dolonet/mtg-multi/mtglib"
+	"github.com/mhsanaei/mtg-multi/logger"
+	"github.com/mhsanaei/mtg-multi/mtglib"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"

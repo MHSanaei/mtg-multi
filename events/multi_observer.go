@@ -3,7 +3,7 @@ package events
 import (
 	"sync"
 
-	"github.com/dolonet/mtg-multi/mtglib"
+	"github.com/mhsanaei/mtg-multi/mtglib"
 )
 
 type multiObserver struct {

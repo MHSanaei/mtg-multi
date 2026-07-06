@@ -3,7 +3,7 @@ package network
 import (
 	"context"
 
-	"github.com/dolonet/mtg-multi/essentials"
+	"github.com/mhsanaei/mtg-multi/essentials"
 	"github.com/stretchr/testify/mock"
 )
 

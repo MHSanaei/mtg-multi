@@ -1,4 +1,4 @@
-module github.com/dolonet/mtg-multi
+module github.com/mhsanaei/mtg-multi
 
 go 1.26
 

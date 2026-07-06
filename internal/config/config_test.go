@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dolonet/mtg-multi/internal/config"
+	"github.com/mhsanaei/mtg-multi/internal/config"
 	"github.com/stretchr/testify/suite"
 )
 

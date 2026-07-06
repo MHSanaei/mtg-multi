@@ -9,7 +9,7 @@ import (
 	"io"
 	rnd "math/rand/v2"
 
-	"github.com/dolonet/mtg-multi/mtglib/internal/tls"
+	"github.com/mhsanaei/mtg-multi/mtglib/internal/tls"
 	"golang.org/x/crypto/curve25519"
 )
 

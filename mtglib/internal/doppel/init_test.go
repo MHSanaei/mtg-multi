@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"time"
 
-	"github.com/dolonet/mtg-multi/essentials"
+	"github.com/mhsanaei/mtg-multi/essentials"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )

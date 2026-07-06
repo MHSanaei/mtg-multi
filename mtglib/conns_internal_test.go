@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dolonet/mtg-multi/internal/testlib"
+	"github.com/mhsanaei/mtg-multi/internal/testlib"
 	"github.com/pires/go-proxyproto"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"

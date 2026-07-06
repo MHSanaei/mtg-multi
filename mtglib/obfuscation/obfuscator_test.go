@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/dolonet/mtg-multi/internal/testlib"
-	"github.com/dolonet/mtg-multi/mtglib"
-	"github.com/dolonet/mtg-multi/mtglib/obfuscation"
+	"github.com/mhsanaei/mtg-multi/internal/testlib"
+	"github.com/mhsanaei/mtg-multi/mtglib"
+	"github.com/mhsanaei/mtg-multi/mtglib/obfuscation"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"

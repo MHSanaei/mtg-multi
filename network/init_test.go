@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	socks5 "github.com/armon/go-socks5"
-	"github.com/dolonet/mtg-multi/essentials"
-	"github.com/dolonet/mtg-multi/network"
+	"github.com/mhsanaei/mtg-multi/essentials"
+	"github.com/mhsanaei/mtg-multi/network"
 	"github.com/mccutchen/go-httpbin/httpbin"
 	"github.com/stretchr/testify/mock"
 )

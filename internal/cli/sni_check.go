@@ -4,8 +4,8 @@ import (
 	"context"
 	"net"
 
-	"github.com/dolonet/mtg-multi/internal/config"
-	"github.com/dolonet/mtg-multi/mtglib"
+	"github.com/mhsanaei/mtg-multi/internal/config"
+	"github.com/mhsanaei/mtg-multi/mtglib"
 )
 
 // sniCheckResult holds the data gathered while comparing the secret

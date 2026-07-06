@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/dolonet/mtg-multi/internal/utils"
+	"github.com/mhsanaei/mtg-multi/internal/utils"
 	"github.com/stretchr/testify/suite"
 )
 

@@ -2,7 +2,7 @@
 
 package relay
 
-import "github.com/dolonet/mtg-multi/mtglib/internal/tls"
+import "github.com/mhsanaei/mtg-multi/mtglib/internal/tls"
 
 const (
 	// MIPS is quite short in resources, and usually it means that it will run

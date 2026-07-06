@@ -10,7 +10,7 @@ import (
 	"hash"
 	"io"
 
-	"github.com/dolonet/mtg-multi/essentials"
+	"github.com/mhsanaei/mtg-multi/essentials"
 )
 
 // Obfuscator implements the obfuscated2 handshake

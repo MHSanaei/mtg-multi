@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/dolonet/mtg-multi/mtglib"
-	"github.com/dolonet/mtg-multi/network/v2"
+	"github.com/mhsanaei/mtg-multi/mtglib"
+	"github.com/mhsanaei/mtg-multi/network/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 )

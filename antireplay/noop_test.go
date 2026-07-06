@@ -3,7 +3,7 @@ package antireplay_test
 import (
 	"testing"
 
-	"github.com/dolonet/mtg-multi/antireplay"
+	"github.com/mhsanaei/mtg-multi/antireplay"
 	"github.com/stretchr/testify/suite"
 )
 

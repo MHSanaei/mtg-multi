@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dolonet/mtg-multi/events"
-	"github.com/dolonet/mtg-multi/mtglib"
-	"github.com/dolonet/mtg-multi/stats"
+	"github.com/mhsanaei/mtg-multi/events"
+	"github.com/mhsanaei/mtg-multi/mtglib"
+	"github.com/mhsanaei/mtg-multi/stats"
 	"github.com/stretchr/testify/suite"
 )
 

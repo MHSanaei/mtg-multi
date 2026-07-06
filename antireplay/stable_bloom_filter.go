@@ -4,7 +4,7 @@ import (
 	"sync"
 
 	"github.com/OneOfOne/xxhash"
-	"github.com/dolonet/mtg-multi/mtglib"
+	"github.com/mhsanaei/mtg-multi/mtglib"
 	boom "github.com/tylertreat/BoomFilters"
 )
 
