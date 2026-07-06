@@ -8,17 +8,61 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/dolonet/mtg-multi/essentials"
-	"github.com/dolonet/mtg-multi/mtglib/internal/dc"
-	"github.com/dolonet/mtg-multi/mtglib/internal/doppel"
-	"github.com/dolonet/mtg-multi/mtglib/internal/relay"
-	"github.com/dolonet/mtg-multi/mtglib/internal/tls"
-	"github.com/dolonet/mtg-multi/mtglib/internal/tls/fake"
-	"github.com/dolonet/mtg-multi/mtglib/obfuscation"
+	"github.com/mhsanaei/mtg-multi/essentials"
+	"github.com/mhsanaei/mtg-multi/mtglib/internal/dc"
+	"github.com/mhsanaei/mtg-multi/mtglib/internal/doppel"
+	"github.com/mhsanaei/mtg-multi/mtglib/internal/relay"
+	"github.com/mhsanaei/mtg-multi/mtglib/internal/tls"
+	"github.com/mhsanaei/mtg-multi/mtglib/internal/tls/fake"
+	"github.com/mhsanaei/mtg-multi/mtglib/obfuscation"
 	"github.com/panjf2000/ants/v2"
 )
+
+// secretSet is an immutable snapshot of the secrets a proxy serves. The proxy
+// keeps it behind an atomic pointer so a running handshake always reads a
+// single consistent view, and ReloadSecrets can swap the whole set in without
+// locking the hot path. secrets, names and hostnames stay index-aligned:
+// secrets[i] belongs to names[i]; hostnames is the deduplicated, sorted set of
+// secret hosts used for SNI matching.
+type secretSet struct {
+	secrets   []Secret
+	names     []string
+	hostnames []string
+}
+
+// buildSecretSet turns a name->secret map into an immutable, name-sorted
+// snapshot. Sorting keeps names[i] and secrets[i] aligned and makes the
+// matched index stable across processes for a given secret map.
+func buildSecretSet(secretsMap map[string]Secret) *secretSet {
+	names := make([]string, 0, len(secretsMap))
+	for name := range secretsMap {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	secretsList := make([]Secret, 0, len(secretsMap))
+	for _, name := range names {
+		secretsList = append(secretsList, secretsMap[name])
+	}
+
+	hostnameSet := make(map[string]struct{}, len(secretsList))
+	for _, s := range secretsList {
+		hostnameSet[s.Host] = struct{}{}
+	}
+
+	hostnames := make([]string, 0, len(hostnameSet))
+	for h := range hostnameSet {
+		hostnames = append(hostnames, h)
+	}
+
+	sort.Strings(hostnames)
+
+	return &secretSet{secrets: secretsList, names: names, hostnames: hostnames}
+}
 
 // Proxy is an MTPROTO proxy structure.
 type Proxy struct {
@@ -39,9 +83,11 @@ type Proxy struct {
 	doppelGanger                *doppel.Ganger
 
 	stats           *ProxyStats
-	secrets         []Secret
-	secretNames     []string
-	secretHostnames []string
+	secrets         atomic.Pointer[secretSet]
+	reloader        func() (map[string]Secret, error)
+	reloadMu        sync.Mutex
+	liveMu          sync.Mutex
+	liveConns       map[string]map[*streamContext]struct{}
 	network         Network
 	antiReplayCache AntiReplayCache
 	blocklist       IPBlocklist
@@ -55,7 +101,7 @@ type Proxy struct {
 // instead of the secret's hostname. When secrets use different hostnames,
 // pass the matched secret's host to front the correct domain.
 func (p *Proxy) DomainFrontingAddress() string {
-	return p.domainFrontingAddressForHost(p.secrets[0].Host)
+	return p.domainFrontingAddressForHost(p.secrets.Load().secrets[0].Host)
 }
 
 func (p *Proxy) domainFrontingAddressForHost(host string) string {
@@ -108,6 +154,9 @@ func (p *Proxy) ServeConn(conn essentials.Conn) {
 	p.stats.UpdateLastSeen(ctx.secretName)
 
 	defer p.stats.OnDisconnect(ctx.secretName)
+
+	p.registerConn(ctx)
+	defer p.unregisterConn(ctx)
 
 	clientConn, err := p.doppelGanger.NewConn(ctx.clientConn)
 	if err != nil {
@@ -205,25 +254,137 @@ func (p *Proxy) Shutdown() {
 	p.blocklist.Shutdown()
 }
 
+// ReloadSecrets re-reads the secret set through the configured reloader and
+// swaps it in atomically, so a client add, removal, disable or re-key takes
+// effect without restarting the process. Connections whose secret disappeared
+// or was re-keyed are closed; every other live stream keeps running, and the
+// /stats counters carry across the swap. It returns ErrReloaderNotConfigured
+// when the proxy was built without a SecretsReloader, and an error (leaving the
+// current set active) when the reloader fails or yields no valid secret.
+func (p *Proxy) ReloadSecrets() error {
+	if p.reloader == nil {
+		return ErrReloaderNotConfigured
+	}
+
+	p.reloadMu.Lock()
+	defer p.reloadMu.Unlock()
+
+	secretsMap, err := p.reloader()
+	if err != nil {
+		return fmt.Errorf("cannot reload secrets: %w", err)
+	}
+
+	if len(secretsMap) == 0 {
+		return ErrSecretInvalid
+	}
+
+	for _, s := range secretsMap {
+		if !s.Valid() {
+			return ErrSecretInvalid
+		}
+	}
+
+	newSet := buildSecretSet(secretsMap)
+	oldSet := p.secrets.Swap(newSet)
+
+	for _, name := range newSet.names {
+		p.stats.PreRegister(name)
+	}
+
+	p.closeStaleConns(oldSet, newSet)
+
+	return nil
+}
+
+func (p *Proxy) registerConn(ctx *streamContext) {
+	p.liveMu.Lock()
+	defer p.liveMu.Unlock()
+
+	conns := p.liveConns[ctx.secretName]
+	if conns == nil {
+		conns = make(map[*streamContext]struct{})
+		p.liveConns[ctx.secretName] = conns
+	}
+
+	conns[ctx] = struct{}{}
+}
+
+func (p *Proxy) unregisterConn(ctx *streamContext) {
+	p.liveMu.Lock()
+	defer p.liveMu.Unlock()
+
+	conns := p.liveConns[ctx.secretName]
+	if conns == nil {
+		return
+	}
+
+	delete(conns, ctx)
+
+	if len(conns) == 0 {
+		delete(p.liveConns, ctx.secretName)
+	}
+}
+
+// closeStaleConns closes every live stream whose secret was dropped from the
+// new set or whose key changed since the old set (a re-key), and leaves the
+// rest connected. Streams are snapshotted under the lock and closed outside it,
+// so each stream's own unregister (which also takes the lock) cannot deadlock.
+func (p *Proxy) closeStaleConns(oldSet, newSet *secretSet) {
+	newKeys := make(map[string][SecretKeyLength]byte, len(newSet.names))
+	for i, name := range newSet.names {
+		newKeys[name] = newSet.secrets[i].Key
+	}
+
+	oldKeys := make(map[string][SecretKeyLength]byte)
+	if oldSet != nil {
+		for i, name := range oldSet.names {
+			oldKeys[name] = oldSet.secrets[i].Key
+		}
+	}
+
+	var stale []*streamContext
+
+	p.liveMu.Lock()
+	for name, conns := range p.liveConns {
+		if newKey, kept := newKeys[name]; kept {
+			if oldKey, had := oldKeys[name]; had && oldKey == newKey {
+				continue
+			}
+		}
+
+		for sc := range conns {
+			stale = append(stale, sc)
+		}
+	}
+	p.liveMu.Unlock()
+
+	for _, sc := range stale {
+		sc.Close()
+	}
+}
+
 func (p *Proxy) doFakeTLSHandshake(ctx *streamContext) bool {
 	rewind := newConnRewind(ctx.clientConn)
 
-	// Build a slice of secret keys to try during HMAC validation.
-	secretKeys := make([][]byte, len(p.secrets))
-	for i := range p.secrets {
-		secretKeys[i] = p.secrets[i].Key[:]
+	// Read the active secret snapshot once so a concurrent ReloadSecrets swap
+	// cannot desync the key list, hostnames and matched index mid-handshake.
+	set := p.secrets.Load()
+
+	secretKeys := make([][]byte, len(set.secrets))
+	for i := range set.secrets {
+		secretKeys[i] = set.secrets[i].Key[:]
 	}
 
 	result, err := fake.ReadClientHelloMulti(
 		rewind,
 		secretKeys,
-		p.secretHostnames,
+		set.hostnames,
 		p.tolerateTimeSkewness,
 	)
 	if err != nil {
 		p.logger.InfoError("cannot read client hello", err)
 
-		frontHost := p.secrets[0].Host
+		frontHost := set.secrets[0].Host
 		if result != nil && result.MatchedHost != "" {
 			frontHost = result.MatchedHost
 		}
@@ -241,9 +402,9 @@ func (p *Proxy) doFakeTLSHandshake(ctx *streamContext) bool {
 		return false
 	}
 
-	matchedSecret := p.secrets[result.MatchedIndex]
+	matchedSecret := set.secrets[result.MatchedIndex]
 	ctx.matchedSecretKey = matchedSecret.Key[:]
-	ctx.secretName = p.secretNames[result.MatchedIndex]
+	ctx.secretName = set.names[result.MatchedIndex]
 	ctx.logger = ctx.logger.BindStr("secret_name", ctx.secretName)
 
 	gangerNoise := p.doppelGanger.NoiseParams()
@@ -388,41 +549,11 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 	logger := opts.getLogger("proxy")
 	updatersLogger := logger.Named("telegram-updaters")
 
-	secretsMap := opts.getSecrets()
-	secretNames := make([]string, 0, len(secretsMap))
-
-	for name := range secretsMap {
-		secretNames = append(secretNames, name)
-	}
-
-	sort.Strings(secretNames)
-
-	secretsList := make([]Secret, 0, len(secretsMap))
-
-	for _, name := range secretNames {
-		secretsList = append(secretsList, secretsMap[name])
-	}
-
-	// Collect unique hostnames across all secrets for SNI matching.
-	hostnameSet := make(map[string]struct{}, len(secretsList))
-	for _, s := range secretsList {
-		hostnameSet[s.Host] = struct{}{}
-	}
-
-	secretHostnames := make([]string, 0, len(hostnameSet))
-	for h := range hostnameSet {
-		secretHostnames = append(secretHostnames, h)
-	}
-
-	sort.Strings(secretHostnames)
+	initialSet := buildSecretSet(opts.getSecrets())
 
 	stats := NewProxyStats()
-	for _, name := range secretNames {
+	for _, name := range initialSet.names {
 		stats.PreRegister(name)
-	}
-
-	if opts.APIBindTo != "" {
-		stats.StartServer(ctx, opts.APIBindTo, logger)
 	}
 
 	if opts.ThrottleMaxConnections > 0 {
@@ -438,9 +569,8 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 		ctx:                      ctx,
 		ctxCancel:                cancel,
 		stats:                    stats,
-		secrets:                  secretsList,
-		secretNames:              secretNames,
-		secretHostnames:          secretHostnames,
+		reloader:                 opts.SecretsReloader,
+		liveConns:                make(map[string]map[*streamContext]struct{}),
 		network:                  opts.Network,
 		antiReplayCache:          opts.AntiReplayCache,
 		blocklist:                opts.IPBlocklist,
@@ -469,6 +599,15 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 			opts.Network.MakeHTTPClient(nil),
 		),
 		domainFrontingProxyProtocol: opts.DomainFrontingProxyProtocol,
+	}
+
+	proxy.secrets.Store(initialSet)
+
+	// Start the stats/reload API only now that the proxy exists, so the
+	// /reload route can drive ReloadSecrets. The two share the api-bind-to
+	// listener; reload is a no-op-with-error when no reloader was supplied.
+	if opts.APIBindTo != "" {
+		stats.StartServer(ctx, opts.APIBindTo, logger, proxy.ReloadSecrets)
 	}
 
 	proxy.doppelGanger.Run()

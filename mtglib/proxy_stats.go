@@ -300,11 +300,13 @@ func (s *ProxyStats) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// StartServer starts an HTTP server for the stats API in a background goroutine.
-// The server is shut down when ctx is cancelled.
-func (s *ProxyStats) StartServer(ctx context.Context, bindTo string, logger Logger) {
+// StartServer starts an HTTP server for the stats API in a background
+// goroutine. It serves GET /stats and, when reload is non-nil, POST /reload to
+// hot-swap the secret set. The server is shut down when ctx is cancelled.
+func (s *ProxyStats) StartServer(ctx context.Context, bindTo string, logger Logger, reload func() error) {
 	mux := http.NewServeMux()
 	mux.Handle("/stats", s)
+	mux.HandleFunc("/reload", reloadHandler(reload, logger))
 
 	srv := &http.Server{
 		Addr:    bindTo,
@@ -333,4 +335,36 @@ func (s *ProxyStats) StartServer(ctx context.Context, bindTo string, logger Logg
 	}()
 
 	logger.BindStr("bind", bindTo).Info("Stats API server started")
+}
+
+// reloadHandler answers POST /reload by running reload and reporting the
+// outcome: 200 on success, 405 for a non-POST, 503 when the proxy has no
+// reloader wired, and 500 when the reload itself fails (the previous secret
+// set stays active). A nil reload is treated as unavailable.
+func reloadHandler(reload func() error, logger Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			http.Error(w, "only POST is allowed", http.StatusMethodNotAllowed)
+
+			return
+		}
+
+		if reload == nil {
+			http.Error(w, "reload is not supported", http.StatusServiceUnavailable)
+
+			return
+		}
+
+		if err := reload(); err != nil {
+			logger.WarningError("secret reload failed", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ok"}` + "\n")) //nolint: errcheck
+	}
 }

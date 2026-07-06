@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 
-	"github.com/dolonet/mtg-multi/internal/utils"
+	"github.com/mhsanaei/mtg-multi/internal/utils"
 )
 
 type Run struct {
@@ -16,5 +16,5 @@ func (r *Run) Run(cli *CLI, version string) error {
 		return fmt.Errorf("cannot init config: %w", err)
 	}
 
-	return runProxy(conf, version)
+	return runProxy(conf, version, r.ConfigPath)
 }

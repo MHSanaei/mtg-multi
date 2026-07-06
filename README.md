@@ -42,6 +42,22 @@ GET /stats
 }
 ```
 
+**Hot secret reload.** The same `api-bind-to` listener also serves a reload
+endpoint, so the `[secrets]` set can change without restarting the proxy:
+
+```
+POST /reload
+```
+
+On success it re-reads the same config file passed to `mtg run` and swaps the
+`[secrets]` set in atomically. Added secrets work immediately; connections whose
+secret was removed or re-keyed are closed; every other user stays connected and
+their stats counters carry over. Only `[secrets]` is hot-applied — changing the
+bind address, domain fronting, network, or throttle still needs a restart.
+Responses: `200 {"status":"ok"}`, `500` if the config cannot be read (the
+current set stays active), `503` when the proxy was started without a config
+file (`simple-run`), and `405` for a non-POST request.
+
 **Connection throttling.** Automatic per-user connection limits to protect the server from overload. A background goroutine recomputes caps every few seconds using a fair-share algorithm: small users keep their connections, remaining budget is split equally among heavy consumers. New connections from over-cap users are rejected; existing connections are not killed.
 
 ```toml
@@ -76,10 +92,10 @@ Everything else — domain fronting, doppelganger, proxy chaining, blocklists, m
 
 ## Quick start
 
-Download a binary from [Releases](https://github.com/dolonet/mtg-multi/releases) or build from source:
+Download a binary from [Releases](https://github.com/mhsanaei/mtg-multi/releases) or build from source:
 
 ```console
-git clone https://github.com/dolonet/mtg-multi.git
+git clone https://github.com/mhsanaei/mtg-multi.git
 cd mtg-multi
 mise install && mise tasks run build
 ```
@@ -186,10 +202,10 @@ public-ipv6 = "2001:db8::1"
 
 ## Быстрый старт
 
-Скачайте бинарник из [Releases](https://github.com/dolonet/mtg-multi/releases) или соберите из исходников:
+Скачайте бинарник из [Releases](https://github.com/mhsanaei/mtg-multi/releases) или соберите из исходников:
 
 ```console
-git clone https://github.com/dolonet/mtg-multi.git
+git clone https://github.com/mhsanaei/mtg-multi.git
 cd mtg-multi
 mise install && mise tasks run build
 ```

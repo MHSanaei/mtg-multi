@@ -205,6 +205,15 @@ type ProxyOpts struct {
 	//
 	// This is an optional setting.
 	ThrottleCheckInterval time.Duration
+
+	// SecretsReloader re-reads the desired secret set from its source (for the
+	// CLI, the config file passed to `mtg run`). When set, a POST to /reload on
+	// the stats API triggers Proxy.ReloadSecrets, which calls this and swaps the
+	// secret set in without a restart. When nil, /reload reports the capability
+	// is unavailable and the proxy behaves exactly as before.
+	//
+	// This is an optional setting.
+	SecretsReloader func() (map[string]Secret, error)
 }
 
 func (p ProxyOpts) valid() error {

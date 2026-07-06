@@ -8,17 +8,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dolonet/mtg-multi/antireplay"
-	"github.com/dolonet/mtg-multi/events"
-	"github.com/dolonet/mtg-multi/internal/config"
-	"github.com/dolonet/mtg-multi/internal/proxyprotocol"
-	"github.com/dolonet/mtg-multi/internal/utils"
-	"github.com/dolonet/mtg-multi/ipblocklist"
-	"github.com/dolonet/mtg-multi/ipblocklist/files"
-	"github.com/dolonet/mtg-multi/logger"
-	"github.com/dolonet/mtg-multi/mtglib"
-	"github.com/dolonet/mtg-multi/network/v2"
-	"github.com/dolonet/mtg-multi/stats"
+	"github.com/mhsanaei/mtg-multi/antireplay"
+	"github.com/mhsanaei/mtg-multi/events"
+	"github.com/mhsanaei/mtg-multi/internal/config"
+	"github.com/mhsanaei/mtg-multi/internal/proxyprotocol"
+	"github.com/mhsanaei/mtg-multi/internal/utils"
+	"github.com/mhsanaei/mtg-multi/ipblocklist"
+	"github.com/mhsanaei/mtg-multi/ipblocklist/files"
+	"github.com/mhsanaei/mtg-multi/logger"
+	"github.com/mhsanaei/mtg-multi/mtglib"
+	"github.com/mhsanaei/mtg-multi/network/v2"
+	"github.com/mhsanaei/mtg-multi/stats"
 	"github.com/pires/go-proxyproto"
 	"github.com/rs/zerolog"
 	"github.com/yl2chen/cidranger"
@@ -281,7 +281,27 @@ func warnDeprecatedDomainFronting(conf *config.Config, log mtglib.Logger) {
 	}
 }
 
-func runProxy(conf *config.Config, version string) error { //nolint: funlen, cyclop
+// makeSecretsReloader builds the callback Proxy.ReloadSecrets uses to re-read
+// the secret set on a POST /reload. It re-parses the same config file passed to
+// `mtg run`, so an operator editing [secrets] and calling reload swaps the set
+// without a restart. It returns nil when there is no config file (simple-run),
+// leaving reload unsupported.
+func makeSecretsReloader(configPath string) func() (map[string]mtglib.Secret, error) {
+	if configPath == "" {
+		return nil
+	}
+
+	return func() (map[string]mtglib.Secret, error) {
+		conf, err := utils.ReadConfig(configPath)
+		if err != nil {
+			return nil, err
+		}
+
+		return conf.GetSecrets(), nil
+	}
+}
+
+func runProxy(conf *config.Config, version, configPath string) error { //nolint: funlen, cyclop
 	logger := makeLogger(conf)
 
 	logger.BindJSON("configuration", conf.String()).Debug("configuration")
@@ -355,7 +375,8 @@ func runProxy(conf *config.Config, version string) error { //nolint: funlen, cyc
 		DoppelGangerEach:    conf.Defense.Doppelganger.UpdateEach.Get(mtglib.DoppelGangerEach),
 		DoppelGangerDRS:     conf.Defense.Doppelganger.DRS.Get(false),
 
-		APIBindTo: conf.APIBindTo.Get(""),
+		APIBindTo:       conf.APIBindTo.Get(""),
+		SecretsReloader: makeSecretsReloader(configPath),
 
 		ThrottleMaxConnections: conf.Throttle.MaxConnections.Get(0),
 		ThrottleCheckInterval:  conf.Throttle.CheckInterval.Get(5 * time.Second),

@@ -23,7 +23,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/dolonet/mtg-multi/essentials"
+	"github.com/mhsanaei/mtg-multi/essentials"
 )
 
 var (
@@ -58,6 +58,11 @@ var (
 	// ErrLoggerIsNotDefined is returned if you are trying to create a proxy but
 	// logger is not defined.
 	ErrLoggerIsNotDefined = errors.New("logger is not defined")
+
+	// ErrReloaderNotConfigured is returned by ReloadSecrets when the proxy was
+	// built without a SecretsReloader, so there is no source to re-read the
+	// secret set from (for example, simple-run mode with no config file).
+	ErrReloaderNotConfigured = errors.New("secrets reloader is not configured")
 )
 
 const (
