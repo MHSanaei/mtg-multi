@@ -1,0 +1,14 @@
+version: "2"
+
+linters:
+  exclusions:
+    rules:
+      # Benchmark harnesses intentionally ignore error returns on
+      # best-effort operations (Close, Write, Fprintf, ...).
+      - path: benchmarks/
+        linters:
+          - errcheck
+      - path: _test\.go
+        linters:
+          - errcheck
+          - ineffassign
