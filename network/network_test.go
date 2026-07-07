@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
@@ -32,7 +33,7 @@ func (suite *NetworkTestSuite) TestLocalHTTPRequest() {
 	client := ntw.MakeHTTPClient(nil)
 
 	resp, err := client.Get(suite.httpServer.URL + "/headers") //nolint: noctx
-	suite.NoError(err)
+	suite.Require().NoError(err)
 
 	defer resp.Body.Close() //nolint: errcheck
 
@@ -50,14 +51,21 @@ func (suite *NetworkTestSuite) TestLocalHTTPRequest() {
 	suite.Equal([]string{"itsme"}, jsonStruct.Headers.UserAgent)
 }
 
+// TestRealHTTPRequest exercises DNS-over-HTTPS resolution and a TLS request
+// against a live external host. It is network-dependent and therefore gated:
+// opt-in with MTG_TEST_NETWORK=1.
 func (suite *NetworkTestSuite) TestRealHTTPRequest() {
+	if os.Getenv("MTG_TEST_NETWORK") != "1" {
+		suite.T().Skip("set MTG_TEST_NETWORK=1 to run live network tests")
+	}
+
 	ntw, err := network.NewNetwork(suite.dialer, "itsme", "1.1.1.1", 0)
 	suite.NoError(err)
 
 	client := ntw.MakeHTTPClient(nil)
 
 	resp, err := client.Get("https://httpbin.org/headers") //nolint: noctx
-	suite.NoError(err)
+	suite.Require().NoError(err)
 
 	defer resp.Body.Close() //nolint: errcheck
 
