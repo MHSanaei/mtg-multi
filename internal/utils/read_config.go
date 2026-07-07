@@ -18,6 +18,10 @@ func ReadConfig(path string) (*config.Config, error) {
 		return nil, fmt.Errorf("cannot parse config: %w", err)
 	}
 
+	if err := conf.ApplyEnvironment(); err != nil {
+		return nil, fmt.Errorf("cannot apply environment variables: %w", err)
+	}
+
 	if err := conf.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}

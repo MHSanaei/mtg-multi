@@ -9,6 +9,12 @@
 # should not make any effect.
 #
 # stats is the only exception.
+#
+# A few environment variables are overlaid on top of this file (environment
+# wins), mirroring the official telegrammessenger/proxy Docker image:
+# SECRET (full ee-secret, or a bare 16-byte hex key + SECRET_HOST), TAG
+# (same as ad-tag below) and MTG_BIND_TO (comma-separated host:port list,
+# same as bind-to below). MTG_-prefixed variants take precedence. See README.
 
 # Debug starts application in debug mode. It starts to be quite verbose
 # in output. Actually, the idea is that you run it in debug mode only if

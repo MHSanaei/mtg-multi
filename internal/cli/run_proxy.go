@@ -271,6 +271,21 @@ func warnSNIMismatch(conf *config.Config, ntw mtglib.Network, log mtglib.Logger)
 		"DPI may detect and block the proxy. See 'mtg doctor' for details")
 }
 
+// warnIgnoredOfficialEnvs flags environment variables of the official
+// telegrammessenger/proxy image that mtg-multi intentionally does not
+// implement, so migrating users are not left guessing why they had no effect.
+// SECRET and TAG (and the MTG_-prefixed variants) are honored — see
+// config.ApplyEnvironment.
+func warnIgnoredOfficialEnvs(log mtglib.Logger) {
+	if _, ok := os.LookupEnv("WORKERS"); ok {
+		log.Warning("WORKERS environment variable is ignored: mtg-multi is a single Go process that already uses all CPU cores")
+	}
+
+	if _, ok := os.LookupEnv("SECRET_COUNT"); ok {
+		log.Warning("SECRET_COUNT environment variable is ignored: define named secrets in the [secrets] config section or via the management API")
+	}
+}
+
 func warnDeprecatedDomainFronting(conf *config.Config, log mtglib.Logger) {
 	if conf.DomainFrontingIP.Value != nil {
 		log.Warning(`config option "domain-fronting-ip" is deprecated and ignored; use "host" in [domain-fronting] instead`)
@@ -310,6 +325,7 @@ func runProxy(conf *config.Config, version, configPath string) error { //nolint:
 
 	logger.BindJSON("configuration", conf.String()).Debug("configuration")
 
+	warnIgnoredOfficialEnvs(logger)
 	warnDeprecatedDomainFronting(conf, logger)
 
 	eventStream, err := makeEventStream(conf, logger)

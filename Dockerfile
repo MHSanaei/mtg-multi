@@ -48,6 +48,10 @@ RUN set -x \
 
 FROM scratch
 
+# The bundled /config/config.toml is a working default; for a config-file-free
+# setup (official telegrammessenger/proxy style) override it with environment
+# variables: SECRET (full ee-secret, or a bare 16-byte hex key + SECRET_HOST),
+# TAG (ad-tag from @MTProxybot) and MTG_BIND_TO (e.g. 0.0.0.0:443). See README.
 ENTRYPOINT ["/mtg"]
 CMD ["run", "/config/config.toml"]
 
