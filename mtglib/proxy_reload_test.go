@@ -34,7 +34,7 @@ func TestBuildSecretSet(t *testing.T) {
 	bob := GenerateSecret("shared.example.com")
 	carol := GenerateSecret("carol.example.com")
 
-	set := buildSecretSet(map[string]Secret{"bob": bob, "alice": alice, "carol": carol}, nil, nil)
+	set := buildSecretSet(map[string]Secret{"bob": bob, "alice": alice, "carol": carol}, nil, nil, nil)
 
 	assert.Equal(t, []string{"alice", "bob", "carol"}, set.names)
 	require.Len(t, set.secrets, 3)
@@ -49,7 +49,7 @@ func newReloadTestProxy(secrets map[string]Secret) *Proxy {
 		stats:     NewProxyStats(),
 		liveConns: make(map[string]map[*streamContext]struct{}),
 	}
-	set := buildSecretSet(secrets, nil, nil)
+	set := buildSecretSet(secrets, nil, nil, nil)
 
 	for _, name := range set.names {
 		p.stats.PreRegister(name)

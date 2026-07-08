@@ -5,12 +5,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"time"
 
 	"github.com/mhsanaei/mtg-multi/mtglib"
 )
 
 type Optional struct {
 	Enabled TypeBool `json:"enabled"`
+}
+
+// ConfigSecretLimit is the typed form of a single [secret-limits.<name>] table:
+// an optional data quota (with reset policy), an expiry deadline and a disabled
+// flag. All fields are optional; the zero value leaves the secret unrestricted.
+type ConfigSecretLimit struct {
+	Quota      TypeBytes      `json:"quota"`
+	QuotaReset TypeQuotaReset `json:"quotaReset"`
+	Expires    TypeExpiry     `json:"expires"`
+	Disabled   TypeBool       `json:"disabled"`
 }
 
 type ListConfig struct {
@@ -22,24 +33,26 @@ type ListConfig struct {
 }
 
 type Config struct {
-	Debug                       TypeBool                 `json:"debug"`
-	AllowFallbackOnUnknownDC    TypeBool                 `json:"allowFallbackOnUnknownDc"`
-	Secret                      mtglib.Secret            `json:"secret"`
-	Secrets                     map[string]mtglib.Secret `json:"secrets"`
-	AdTag                       TypeAdTag                `json:"adTag"`
-	SecretAdTags                map[string]TypeAdTag     `json:"secretAdTags"`
-	APIToken                    string                   `json:"apiToken"`
-	BindTo                      []TypeHostPort           `json:"bindTo"`
-	ProxyProtocolListener       TypeBool                 `json:"proxyProtocolListener"`
-	PreferIP                    TypePreferIP             `json:"preferIp"`
-	AutoUpdate                  TypeBool                 `json:"autoUpdate"`
-	DomainFrontingPort          TypePort                 `json:"domainFrontingPort"`
-	DomainFrontingIP            TypeIP                   `json:"domainFrontingIp"`
-	DomainFrontingProxyProtocol TypeBool                 `json:"domainFrontingProxyProtocol"`
-	TolerateTimeSkewness        TypeDuration             `json:"tolerateTimeSkewness"`
-	Concurrency                 TypeConcurrency          `json:"concurrency"`
-	PublicIPv4                  TypeIP                   `json:"publicIpv4"`
-	PublicIPv6                  TypeIP                   `json:"publicIpv6"`
+	Debug                       TypeBool                     `json:"debug"`
+	AllowFallbackOnUnknownDC    TypeBool                     `json:"allowFallbackOnUnknownDc"`
+	Secret                      mtglib.Secret                `json:"secret"`
+	Secrets                     map[string]mtglib.Secret     `json:"secrets"`
+	AdTag                       TypeAdTag                    `json:"adTag"`
+	SecretAdTags                map[string]TypeAdTag         `json:"secretAdTags"`
+	SecretLimits                map[string]ConfigSecretLimit `json:"secretLimits"`
+	UsageStateFile              string                       `json:"usageStateFile"`
+	APIToken                    string                       `json:"apiToken"`
+	BindTo                      []TypeHostPort               `json:"bindTo"`
+	ProxyProtocolListener       TypeBool                     `json:"proxyProtocolListener"`
+	PreferIP                    TypePreferIP                 `json:"preferIp"`
+	AutoUpdate                  TypeBool                     `json:"autoUpdate"`
+	DomainFrontingPort          TypePort                     `json:"domainFrontingPort"`
+	DomainFrontingIP            TypeIP                       `json:"domainFrontingIp"`
+	DomainFrontingProxyProtocol TypeBool                     `json:"domainFrontingProxyProtocol"`
+	TolerateTimeSkewness        TypeDuration                 `json:"tolerateTimeSkewness"`
+	Concurrency                 TypeConcurrency              `json:"concurrency"`
+	PublicIPv4                  TypeIP                       `json:"publicIpv4"`
+	PublicIPv6                  TypeIP                       `json:"publicIpv6"`
 	DomainFronting              struct {
 		Host          TypeHost `json:"host"`
 		IP            TypeIP   `json:"ip"`
@@ -171,6 +184,10 @@ func (c *Config) Validate() error {
 		return err
 	}
 
+	if err := c.validateSecretLimits(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -194,6 +211,32 @@ func (c *Config) validateAdTags() error {
 	for name := range c.SecretAdTags {
 		if _, ok := known[name]; !ok {
 			return fmt.Errorf("secret-ad-tags refers to unknown secret %q", name)
+		}
+	}
+
+	return nil
+}
+
+// validateSecretLimits ensures every [secret-limits] entry names a secret that
+// actually exists. Field values are already validated at parse time by their
+// Type* setters, so here we only guard against typos in the secret name.
+func (c *Config) validateSecretLimits() error {
+	if len(c.SecretLimits) == 0 {
+		return nil
+	}
+
+	known := make(map[string]struct{}, len(c.Secrets)+1)
+	if len(c.Secrets) > 0 {
+		for name := range c.Secrets {
+			known[name] = struct{}{}
+		}
+	} else {
+		known["default"] = struct{}{}
+	}
+
+	for name := range c.SecretLimits {
+		if _, ok := known[name]; !ok {
+			return fmt.Errorf("secret-limits refers to unknown secret %q", name)
 		}
 	}
 
@@ -228,6 +271,40 @@ func (c *Config) GetSecretAdTags() map[string][mtglib.AdTagLength]byte {
 		if t := tag.Get(); t != nil {
 			out[name] = *t
 		}
+	}
+
+	return out
+}
+
+// GetSecretLimits converts the [secret-limits] tables into the engine-level
+// map keyed by secret name, or nil when none impose any restriction.
+func (c *Config) GetSecretLimits() map[string]mtglib.SecretLimits {
+	if len(c.SecretLimits) == 0 {
+		return nil
+	}
+
+	out := make(map[string]mtglib.SecretLimits, len(c.SecretLimits))
+
+	for name, l := range c.SecretLimits {
+		lim := mtglib.SecretLimits{
+			QuotaBytes: int64(l.Quota.Get(0)),
+			ExpiresAt:  l.Expires.Get(time.Time{}),
+			Disabled:   l.Disabled.Get(false),
+		}
+
+		if l.QuotaReset.Get("none") == mtglib.QuotaResetMonthly.String() {
+			lim.QuotaReset = mtglib.QuotaResetMonthly
+		}
+
+		if lim.IsZero() {
+			continue
+		}
+
+		out[name] = lim
+	}
+
+	if len(out) == 0 {
+		return nil
 	}
 
 	return out

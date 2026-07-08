@@ -30,12 +30,13 @@ secret = "ee367a189aee18fa31c190054efd4a8e9573746f726167652e676f6f676c6561706973
 # If not set, the API server is not started. Bind it to a loopback address
 # (127.0.0.1) unless you set api-token below, since the API can mutate secrets.
 # Endpoints:
-#   GET    /stats            per-user connection counts and traffic
-#   POST   /reload           re-read [secrets], ad-tag and [secret-ad-tags] from this file
-#   GET    /secrets          list secrets (name, secret, host, ad_tag, effective_ad_tag)
-#   POST   /secrets          add/update one secret: {"name","secret","ad_tag"?}
-#   PUT    /secrets          replace the whole set: {"secrets":{name:{secret,ad_tag?}},"ad_tag"?}
+#   GET    /stats            per-user connection counts, traffic and quota usage
+#   POST   /reload           re-read [secrets], ad-tag, [secret-ad-tags] and [secret-limits] from this file
+#   GET    /secrets          list secrets (name, secret, host, ad_tag, effective_ad_tag, quota/expiry/disabled)
+#   POST   /secrets          add/update one secret: {"name","secret","ad_tag"?,"quota"?,"quota_reset"?,"expires"?,"disabled"?}
+#   PUT    /secrets          replace the whole set: {"secrets":{name:{secret,ad_tag?,quota?,quota_reset?,expires?,disabled?}},"ad_tag"?}
 #   DELETE /secrets/{name}   remove one secret
+#   POST   /secrets/{name}/reset-quota   zero the secret's used-bytes counter
 #   GET    /adtag            read the global ad-tag: {"ad_tag": "<hex>"|null}
 #   PUT    /adtag            set the global ad-tag: {"ad_tag":"<32 hex chars>"}
 #   DELETE /adtag            clear the global ad-tag
@@ -153,6 +154,12 @@ tolerate-time-skewness = "5s"
 # Otherwise, chose a new DC.
 allow-fallback-on-unknown-dc = false
 
+# Path of a JSON file where per-secret data-quota usage is persisted so it
+# survives restarts (see [secret-limits] below). When unset (default), quota
+# accounting is in-memory only and resets when the process restarts. The file is
+# rewritten atomically every ~30s and on shutdown.
+# usage-state-file = "/var/lib/mtg/usage.json"
+
 # For multi-user support, use the [secrets] section instead of "secret".
 # Each key is a user name, used for per-user stats tracking.
 # Secrets may use different hostnames for per-user domain fronting.
@@ -170,6 +177,37 @@ allow-fallback-on-unknown-dc = false
 # @MTProxybot separately to get a distinct tag.
 # [secret-ad-tags]
 # bob = "fedcba9876543210fedcba9876543210"
+
+# Optional per-secret governance limits: a data quota, an expiry deadline and a
+# disabled switch. Each [secret-limits.<name>] names a secret from [secrets].
+# A secret without an entry is unlimited, never expires and is enabled.
+#
+# When a user is over quota, past its expiry, or disabled, new connections are
+# transparently routed to the fronting domain (exactly like a wrong secret), so
+# the outcome is indistinguishable to a prober. Quota is enforced at connection
+# time; an in-progress session is not cut off mid-stream, but disabling or
+# expiring a secret (via reload or the API) does close its live connections.
+#
+# Fields (all optional):
+#   quota        max relayed bytes; human sizes ("10GB", "500MiB") or a bare
+#                integer byte count; omit for unlimited
+#   quota-reset  "none" (default, lifetime cap) or "monthly" (reset each month)
+#   expires      RFC3339 ("2026-12-31T00:00:00Z") or date ("2026-12-31"); omit
+#                for never
+#   disabled     true to reject the secret without removing it (default false)
+#
+# Set usage-state-file above so quota usage survives restarts. Limits set via
+# the management API are in-memory only and are overridden by the next reload.
+#
+# IMPORTANT: like [secrets] and [secret-ad-tags], [secret-limits] must appear
+# after all global keys — in TOML, keys after a [section] belong to that table.
+# [secret-limits.alice]
+# quota = "10GB"
+# quota-reset = "monthly"
+# expires = "2026-12-31"
+# disabled = false
+# [secret-limits.bob]
+# quota = "500MB"
 
 # This section is relevant to communication with fronting domain. Usually
 # you do not need to setup anything here but there are plenty of cases, especially

@@ -21,6 +21,12 @@ type SecretConfig struct {
 	// GlobalAdTag is the advertising tag applied to any secret without an
 	// override. nil means no advertising (the direct-DC path).
 	GlobalAdTag *[AdTagLength]byte
+
+	// Limits carries optional per-secret governance limits (data quota, expiry,
+	// disabled flag) keyed by secret name. A name absent here has no limits. It
+	// is swapped in atomically together with the secrets, so a reload or API
+	// mutation can change limits without a restart.
+	Limits map[string]SecretLimits
 }
 
 // ProxyOpts is a structure with settings to mtg proxy.
@@ -248,6 +254,20 @@ type ProxyOpts struct {
 	//
 	// This is an optional setting.
 	SecretAdTags map[string][AdTagLength]byte
+
+	// SecretLimits carries per-secret governance limits (data quota, expiry,
+	// disabled flag) keyed by secret name. A secret absent here is unlimited,
+	// never expires and is enabled.
+	//
+	// This is an optional setting.
+	SecretLimits map[string]SecretLimits
+
+	// UsageStateFile is the path of a JSON file where per-secret quota usage is
+	// persisted so it survives restarts. When empty, quota accounting is
+	// in-memory only and resets when the process restarts.
+	//
+	// This is an optional setting.
+	UsageStateFile string
 
 	// PublicIPv4 and PublicIPv6 advertise this proxy's externally reachable
 	// addresses. They are used as the proxy's own address in the middle-proxy

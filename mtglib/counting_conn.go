@@ -20,6 +20,7 @@ func (c *countingConn) Read(p []byte) (int, error) {
 	n, err := c.Conn.Read(p)
 	if n > 0 {
 		c.st.bytesIn.Add(int64(n))
+		c.st.quotaUsed.Add(int64(n))
 	}
 
 	return n, err
@@ -29,6 +30,7 @@ func (c *countingConn) Write(p []byte) (int, error) {
 	n, err := c.Conn.Write(p)
 	if n > 0 {
 		c.st.bytesOut.Add(int64(n))
+		c.st.quotaUsed.Add(int64(n))
 	}
 
 	return n, err

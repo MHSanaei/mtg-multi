@@ -316,6 +316,7 @@ func makeSecretsReloader(configPath string) func() (mtglib.SecretConfig, error) 
 			Secrets:      conf.GetSecrets(),
 			SecretAdTags: conf.GetSecretAdTags(),
 			GlobalAdTag:  conf.GetAdTag(),
+			Limits:       conf.GetSecretLimits(),
 		}, nil
 	}
 }
@@ -401,6 +402,8 @@ func runProxy(conf *config.Config, version, configPath string) error { //nolint:
 
 		GlobalAdTag:    conf.GetAdTag(),
 		SecretAdTags:   conf.GetSecretAdTags(),
+		SecretLimits:   conf.GetSecretLimits(),
+		UsageStateFile: conf.UsageStateFile,
 		PublicIPv4:     conf.PublicIPv4.Get(nil),
 		PublicIPv6:     conf.PublicIPv6.Get(nil),
 		AdvertisedPort: int(conf.GetFirstBindPort()),

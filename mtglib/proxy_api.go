@@ -14,13 +14,22 @@ import (
 
 // SecretInfo is the JSON representation of a single named secret returned by
 // GET /secrets. AdTag is the per-secret override (empty when none) and
-// EffectiveAdTag is the tag actually applied after global fallback.
+// EffectiveAdTag is the tag actually applied after global fallback. The quota
+// and expiry fields describe the secret's governance limits (omitted when
+// unset), and QuotaUsed/QuotaRemaining report live usage.
 type SecretInfo struct {
 	Name           string `json:"name"`
 	Secret         string `json:"secret"`
 	Host           string `json:"host"`
 	AdTag          string `json:"ad_tag,omitempty"`
 	EffectiveAdTag string `json:"effective_ad_tag,omitempty"`
+
+	Quota          int64      `json:"quota,omitempty"`
+	QuotaUsed      int64      `json:"quota_used,omitempty"`
+	QuotaRemaining *int64     `json:"quota_remaining,omitempty"`
+	QuotaReset     string     `json:"quota_reset,omitempty"`
+	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
+	Disabled       bool       `json:"disabled,omitempty"`
 }
 
 // SnapshotSecrets returns the active secret set as a name-sorted list, exposing
@@ -45,10 +54,39 @@ func (p *Proxy) SnapshotSecrets() []SecretInfo {
 			info.EffectiveAdTag = hex.EncodeToString(eff[:])
 		}
 
+		fillLimitInfo(&info, set.limits[i], p.stats.quotaUsedValue(name))
+
 		out[i] = info
 	}
 
 	return out
+}
+
+// fillLimitInfo copies a secret's governance limits and live usage into a
+// SecretInfo for the GET /secrets response.
+func fillLimitInfo(info *SecretInfo, lim SecretLimits, used int64) {
+	if lim.QuotaBytes > 0 {
+		info.Quota = lim.QuotaBytes
+		info.QuotaUsed = used
+
+		remaining := lim.QuotaBytes - used
+		if remaining < 0 {
+			remaining = 0
+		}
+
+		info.QuotaRemaining = &remaining
+	}
+
+	if lim.QuotaReset != QuotaResetNone {
+		info.QuotaReset = lim.QuotaReset.String()
+	}
+
+	if !lim.ExpiresAt.IsZero() {
+		expires := lim.ExpiresAt
+		info.ExpiresAt = &expires
+	}
+
+	info.Disabled = lim.Disabled
 }
 
 // ReplaceSecrets swaps the entire secret configuration (secrets + advertising
@@ -62,10 +100,12 @@ func (p *Proxy) ReplaceSecrets(cfg SecretConfig) error {
 }
 
 // PutSecret adds or updates a single secret, optionally setting its per-secret
-// advertising tag (nil clears the override). Only a key change closes that
-// secret's live connections; an adtag-only change leaves them running because
-// closeStaleConns keys on the secret key, not the tag.
-func (p *Proxy) PutSecret(name string, s Secret, adTag *[AdTagLength]byte) error {
+// advertising tag (nil clears the override) and governance limits (nil or a
+// zero value clears them). Only a key change closes that secret's live
+// connections; an adtag-only change leaves them running because closeStaleConns
+// keys on the secret key, not the tag. A disable/expiry set here takes effect
+// immediately because swapSecretConfigLocked also closes newly-denied streams.
+func (p *Proxy) PutSecret(name string, s Secret, adTag *[AdTagLength]byte, limits *SecretLimits) error {
 	if name == "" {
 		return fmt.Errorf("%w: empty name", ErrSecretInvalid)
 	}
@@ -88,6 +128,16 @@ func (p *Proxy) PutSecret(name string, s Secret, adTag *[AdTagLength]byte) error
 		cfg.SecretAdTags[name] = *adTag
 	} else {
 		delete(cfg.SecretAdTags, name)
+	}
+
+	if limits != nil && !limits.IsZero() {
+		if cfg.Limits == nil {
+			cfg.Limits = make(map[string]SecretLimits)
+		}
+
+		cfg.Limits[name] = *limits
+	} else {
+		delete(cfg.Limits, name)
 	}
 
 	return p.swapSecretConfigLocked(cfg)
@@ -181,7 +231,7 @@ func (p *Proxy) startAPIServer(ctx context.Context, bindTo, token string) {
 func (p *Proxy) buildAPIHandler(token string) http.Handler {
 	mux := http.NewServeMux()
 
-	mux.Handle("/stats", p.stats)
+	mux.HandleFunc("GET /stats", p.handleStats)
 
 	var reload func() error
 	if p.reloader != nil {
@@ -194,6 +244,7 @@ func (p *Proxy) buildAPIHandler(token string) http.Handler {
 	mux.HandleFunc("PUT /secrets", p.handlePutSecrets)
 	mux.HandleFunc("POST /secrets", p.handlePostSecret)
 	mux.HandleFunc("DELETE /secrets/{name}", p.handleDeleteSecret)
+	mux.HandleFunc("POST /secrets/{name}/reset-quota", p.handleResetQuota)
 
 	mux.HandleFunc("GET /adtag", p.handleGetAdTag)
 	mux.HandleFunc("PUT /adtag", p.handlePutAdTag)
@@ -230,9 +281,118 @@ func (p *Proxy) handleGetSecrets(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"secrets": p.SnapshotSecrets()})
 }
 
+// handleStats serves GET /stats, enriching the base runtime counters with each
+// secret's configured governance limits (quota ceiling, reset policy, expiry,
+// disabled) taken from the active secret snapshot.
+func (p *Proxy) handleStats(w http.ResponseWriter, _ *http.Request) {
+	resp := p.stats.buildResponse()
+
+	set := p.secrets.Load()
+	for i, name := range set.names {
+		user, ok := resp.Users[name]
+		if !ok {
+			continue
+		}
+
+		lim := set.limits[i]
+
+		if lim.QuotaBytes > 0 {
+			user.Quota = lim.QuotaBytes
+
+			remaining := lim.QuotaBytes - user.QuotaUsed
+			if remaining < 0 {
+				remaining = 0
+			}
+
+			user.QuotaRemaining = &remaining
+		}
+
+		if lim.QuotaReset != QuotaResetNone {
+			user.QuotaReset = lim.QuotaReset.String()
+		}
+
+		if !lim.ExpiresAt.IsZero() {
+			expires := lim.ExpiresAt
+			user.ExpiresAt = &expires
+		}
+
+		user.Disabled = lim.Disabled
+
+		resp.Users[name] = user
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleResetQuota serves POST /secrets/{name}/reset-quota, zeroing the secret's
+// used-bytes counter and restarting its quota period. An unknown secret is 404.
+func (p *Proxy) handleResetQuota(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+
+	if !p.hasSecret(name) {
+		httpError(w, http.StatusNotFound, ErrSecretNotFound)
+
+		return
+	}
+
+	p.stats.ResetQuota(name)
+	writeJSON(w, http.StatusOK, statusOK)
+}
+
+// hasSecret reports whether name is present in the active secret set.
+func (p *Proxy) hasSecret(name string) bool {
+	set := p.secrets.Load()
+
+	for _, n := range set.names {
+		if n == name {
+			return true
+		}
+	}
+
+	return false
+}
+
+// limitFields are the optional per-secret governance limits accepted by the
+// secrets API. All fields are optional; omitting them (or sending zero values)
+// clears the corresponding limit. Quota accepts human sizes ("10GB"), expires
+// accepts RFC3339 or YYYY-MM-DD, and quota_reset is "none" or "monthly".
+type limitFields struct {
+	Quota      string `json:"quota,omitempty"`
+	QuotaReset string `json:"quota_reset,omitempty"`
+	Expires    string `json:"expires,omitempty"`
+	Disabled   bool   `json:"disabled,omitempty"`
+}
+
+// parse turns the raw string fields into a SecretLimits, returning an error for
+// a malformed quota, reset policy or expiry.
+func (l limitFields) parse() (SecretLimits, error) {
+	quota, err := ParseQuotaBytes(l.Quota)
+	if err != nil {
+		return SecretLimits{}, err
+	}
+
+	reset, err := ParseQuotaReset(l.QuotaReset)
+	if err != nil {
+		return SecretLimits{}, err
+	}
+
+	expires, err := ParseExpiry(l.Expires)
+	if err != nil {
+		return SecretLimits{}, err
+	}
+
+	return SecretLimits{
+		QuotaBytes: quota,
+		QuotaReset: reset,
+		ExpiresAt:  expires,
+		Disabled:   l.Disabled,
+	}, nil
+}
+
 type secretEntry struct {
 	Secret string `json:"secret"`
 	AdTag  string `json:"ad_tag,omitempty"`
+	limitFields
 }
 
 type putSecretsRequest struct {
@@ -272,6 +432,21 @@ func (p *Proxy) handlePutSecrets(w http.ResponseWriter, r *http.Request) {
 		if tag != nil {
 			cfg.SecretAdTags[name] = *tag
 		}
+
+		limits, err := entry.parse()
+		if err != nil {
+			httpError(w, http.StatusBadRequest, fmt.Errorf("invalid limits for %q: %w", name, err))
+
+			return
+		}
+
+		if !limits.IsZero() {
+			if cfg.Limits == nil {
+				cfg.Limits = make(map[string]SecretLimits)
+			}
+
+			cfg.Limits[name] = limits
+		}
 	}
 
 	global, err := parseAdTagHex(req.AdTag)
@@ -296,6 +471,7 @@ type postSecretRequest struct {
 	Name   string `json:"name"`
 	Secret string `json:"secret"`
 	AdTag  string `json:"ad_tag,omitempty"`
+	limitFields
 }
 
 func (p *Proxy) handlePostSecret(w http.ResponseWriter, r *http.Request) {
@@ -319,7 +495,14 @@ func (p *Proxy) handlePostSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := p.PutSecret(req.Name, secret, tag); err != nil {
+	limits, err := req.parse()
+	if err != nil {
+		httpError(w, http.StatusBadRequest, fmt.Errorf("invalid limits: %w", err))
+
+		return
+	}
+
+	if err := p.PutSecret(req.Name, secret, tag, &limits); err != nil {
 		httpError(w, secretMutationStatus(err), err)
 
 		return

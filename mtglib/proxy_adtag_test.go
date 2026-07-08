@@ -20,6 +20,7 @@ func TestEffectiveAdTag(t *testing.T) {
 		map[string]Secret{"alice": alice, "bob": bob},
 		map[string][AdTagLength]byte{"bob": perBob},
 		&global,
+		nil,
 	)
 
 	// names are sorted: alice=0, bob=1.
@@ -39,7 +40,7 @@ func TestEffectiveAdTagNoGlobal(t *testing.T) {
 
 	alice := GenerateSecret("alice.example.com")
 
-	set := buildSecretSet(map[string]Secret{"alice": alice}, nil, nil)
+	set := buildSecretSet(map[string]Secret{"alice": alice}, nil, nil, nil)
 
 	// No override and no global tag -> nil (the direct-DC path).
 	assert.Nil(t, set.effectiveAdTag(0))

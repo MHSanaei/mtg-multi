@@ -272,7 +272,7 @@ func TestAPIPutSecretAdTagKeepsConnections(t *testing.T) {
 		p := newAPITestProxy(map[string]Secret{"alice": alice})
 		stream := registerFakeStream(p, "alice")
 
-		require.NoError(t, p.PutSecret("alice", alice, &tag))
+		require.NoError(t, p.PutSecret("alice", alice, &tag, nil))
 		assert.NoError(t, stream.Err(), "adtag-only change must not drop the connection")
 
 		set := p.secrets.Load()
@@ -287,7 +287,7 @@ func TestAPIPutSecretAdTagKeepsConnections(t *testing.T) {
 		stream := registerFakeStream(p, "alice")
 
 		rekeyed := GenerateSecret("alice.example.com")
-		require.NoError(t, p.PutSecret("alice", rekeyed, nil))
+		require.NoError(t, p.PutSecret("alice", rekeyed, nil, nil))
 		assert.Error(t, stream.Err(), "re-keying must drop the old connection")
 	})
 }

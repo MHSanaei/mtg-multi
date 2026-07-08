@@ -76,10 +76,11 @@ func (c *Config) applyEnvSecret() error {
 	}
 
 	// The environment fully defines the secret set: named [secrets] and
-	// their [secret-ad-tags] from the file no longer apply.
+	// their [secret-ad-tags]/[secret-limits] from the file no longer apply.
 	c.Secret = secret
 	c.Secrets = nil
 	c.SecretAdTags = nil
+	c.SecretLimits = nil
 
 	return nil
 }

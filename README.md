@@ -18,6 +18,8 @@ sponsored-channel ad-tag that mtg v2 removed.
 - **Hot reload** — swap the secret set from the config file without dropping users.
 - **Sponsored channel (ad-tag)** — the promoted-channel feature, back again.
 - **Connection throttling** — automatic fair-share per-user connection caps.
+- **Per-user quotas, expiry & disable** — data caps (with optional monthly reset),
+  a validity deadline, and an on/off switch, persisted across restarts.
 - **Public IP override** and **Docker-style environment variables**.
 
 Everything else — FakeTLS, domain fronting, the doppelganger traffic mimic,
@@ -37,6 +39,7 @@ for the shared internals.
   - [API authentication](#api-authentication)
   - [Sponsored channel (ad-tag)](#sponsored-channel-ad-tag)
   - [Connection throttling](#connection-throttling)
+  - [Per-user quotas, expiry & disable](#per-user-quotas-expiry--disable)
   - [Public IP override](#public-ip-override)
   - [Environment variables](#environment-variables)
 - [Command reference](#command-reference)
@@ -184,7 +187,8 @@ the secret set in atomically:
 - connections whose secret was removed or re-keyed are closed;
 - every other user stays connected and their stats counters carry over.
 
-Only `[secrets]`, `ad-tag`, and `[secret-ad-tags]` are hot-applied. Changing the
+Only `[secrets]`, `ad-tag`, `[secret-ad-tags]`, and `[secret-limits]` are
+hot-applied. Changing the
 bind address, domain fronting, network, or throttle settings still needs a
 restart.
 
@@ -199,10 +203,11 @@ at runtime, without editing the file or restarting:
 
 | Method & path | Action |
 |---|---|
-| `GET /secrets` | List secrets (`name`, `secret`, `host`, `ad_tag`, `effective_ad_tag`). |
-| `POST /secrets` | Add or update one: `{"name","secret","ad_tag"?}`. |
-| `PUT /secrets` | Replace the whole set: `{"secrets":{name:{secret,ad_tag?}},"ad_tag"?}`. |
+| `GET /secrets` | List secrets (`name`, `secret`, `host`, `ad_tag`, `effective_ad_tag`, plus `quota`/`quota_used`/`quota_remaining`/`expires_at`/`disabled` when set). |
+| `POST /secrets` | Add or update one: `{"name","secret","ad_tag"?,"quota"?,"quota_reset"?,"expires"?,"disabled"?}`. |
+| `PUT /secrets` | Replace the whole set: `{"secrets":{name:{secret,ad_tag?,quota?,quota_reset?,expires?,disabled?}},"ad_tag"?}`. |
 | `DELETE /secrets/{name}` | Remove one (`404` if unknown, `409` if it is the last one). |
+| `POST /secrets/{name}/reset-quota` | Zero the secret's used-bytes counter (`404` if unknown). |
 | `GET /adtag` | Read the global ad-tag: `{"ad_tag":"<hex>"\|null}`. |
 | `PUT /adtag` | Set the global ad-tag: `{"ad_tag":"<32 hex chars>"}`. |
 | `DELETE /adtag` | Clear the global ad-tag. |
@@ -303,6 +308,60 @@ Throttle state is exposed in the stats response:
   }
 }
 ```
+
+### Per-user quotas, expiry & disable
+
+Each named secret can carry governance limits — a data quota, a validity
+deadline, and an on/off switch — so you can run mtg-multi as a reseller or
+multi-tenant proxy. Add a `[secret-limits.<name>]` table for any secret in
+`[secrets]`; a secret without one is unlimited, never expires and is enabled.
+
+```toml
+# Persist quota usage across restarts (optional but recommended for quotas).
+usage-state-file = "/var/lib/mtg/usage.json"
+
+[secret-limits.alice]
+quota = "10GB"            # human size or a bare byte count; omit for unlimited
+quota-reset = "monthly"   # "none" (default, lifetime cap) or "monthly"
+expires = "2026-12-31"    # RFC3339 or YYYY-MM-DD; omit for never
+disabled = false          # true rejects the secret without removing it
+
+[secret-limits.bob]
+quota = "500MB"
+```
+
+When a user is over quota, past its expiry, or disabled, new connections are
+transparently routed to the **fronting domain** — exactly like a wrong secret —
+so a prober cannot tell a limited user from an invalid one. Enforcement happens
+at connection time: an in-progress session is not cut off mid-stream, but
+disabling or expiring a secret (via reload or the API) closes its live
+connections immediately. A quota overrun never kills an active session.
+
+Usage is exposed per user in `/stats` and `/secrets`:
+
+```json
+{
+  "users": {
+    "alice": {
+      "connections": 2,
+      "bytes_in": 1048576,
+      "bytes_out": 2097152,
+      "quota_used": 3145728,
+      "quota": 10737418240,
+      "quota_remaining": 10734272512,
+      "quota_reset": "monthly",
+      "expires_at": "2026-12-31T00:00:00Z"
+    }
+  }
+}
+```
+
+Set `usage-state-file` so `quota_used` survives restarts; it is flushed
+atomically every ~30 seconds and on shutdown. With `quota-reset = "monthly"` the
+counter resets at the start of each calendar month. Clear a user's usage
+manually with `POST /secrets/{name}/reset-quota`. Limits set through the
+management API are in-memory only and are overridden by the next reload — the
+config file remains the source of truth.
 
 ### Public IP override
 

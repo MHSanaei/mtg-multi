@@ -37,6 +37,9 @@ type secretSet struct {
 	// without an override, or nil when no advertising is configured.
 	adTags      []*[AdTagLength]byte
 	globalAdTag *[AdTagLength]byte
+	// limits[i] holds the governance limits (quota, expiry, disabled) for
+	// secrets[i]; the zero value means the secret is unrestricted.
+	limits []SecretLimits
 }
 
 // effectiveAdTag returns the advertising tag that applies to secrets[i]: the
@@ -58,6 +61,8 @@ func (s *secretSet) toConfig() SecretConfig {
 
 	var perSecret map[string][AdTagLength]byte
 
+	var limits map[string]SecretLimits
+
 	for i, name := range s.names {
 		secrets[name] = s.secrets[i]
 
@@ -68,17 +73,26 @@ func (s *secretSet) toConfig() SecretConfig {
 
 			perSecret[name] = *s.adTags[i]
 		}
+
+		if i < len(s.limits) && !s.limits[i].IsZero() {
+			if limits == nil {
+				limits = make(map[string]SecretLimits)
+			}
+
+			limits[name] = s.limits[i]
+		}
 	}
 
-	return SecretConfig{Secrets: secrets, SecretAdTags: perSecret, GlobalAdTag: s.globalAdTag}
+	return SecretConfig{Secrets: secrets, SecretAdTags: perSecret, GlobalAdTag: s.globalAdTag, Limits: limits}
 }
 
 // buildSecretSet turns a name->secret map into an immutable, name-sorted
 // snapshot. Sorting keeps names[i] and secrets[i] aligned and makes the
 // matched index stable across processes for a given secret map. perSecret
 // carries optional per-name advertising tags and global is the fallback tag;
-// both may be nil.
-func buildSecretSet(secretsMap map[string]Secret, perSecret map[string][AdTagLength]byte, global *[AdTagLength]byte) *secretSet {
+// both may be nil. limitsMap carries optional per-name governance limits and
+// may be nil.
+func buildSecretSet(secretsMap map[string]Secret, perSecret map[string][AdTagLength]byte, global *[AdTagLength]byte, limitsMap map[string]SecretLimits) *secretSet {
 	names := make([]string, 0, len(secretsMap))
 	for name := range secretsMap {
 		names = append(names, name)
@@ -88,6 +102,7 @@ func buildSecretSet(secretsMap map[string]Secret, perSecret map[string][AdTagLen
 
 	secretsList := make([]Secret, 0, len(secretsMap))
 	adTags := make([]*[AdTagLength]byte, len(names))
+	limits := make([]SecretLimits, len(names))
 
 	for i, name := range names {
 		secretsList = append(secretsList, secretsMap[name])
@@ -95,6 +110,10 @@ func buildSecretSet(secretsMap map[string]Secret, perSecret map[string][AdTagLen
 		if tag, ok := perSecret[name]; ok {
 			t := tag
 			adTags[i] = &t
+		}
+
+		if lim, ok := limitsMap[name]; ok {
+			limits[i] = lim
 		}
 	}
 
@@ -116,6 +135,7 @@ func buildSecretSet(secretsMap map[string]Secret, perSecret map[string][AdTagLen
 		hostnames:   hostnames,
 		adTags:      adTags,
 		globalAdTag: global,
+		limits:      limits,
 	}
 }
 
@@ -141,6 +161,8 @@ type Proxy struct {
 	ourIPv4        net.IP
 	ourIPv6        net.IP
 	advertisedPort int
+
+	usageStateFile string
 
 	stats           *ProxyStats
 	secrets         atomic.Pointer[secretSet]
@@ -312,6 +334,12 @@ func (p *Proxy) Shutdown() {
 
 	p.allowlist.Shutdown()
 	p.blocklist.Shutdown()
+
+	if p.usageStateFile != "" {
+		if err := p.stats.FlushUsage(p.usageStateFile); err != nil {
+			p.logger.WarningError("cannot flush usage state on shutdown", err)
+		}
+	}
 }
 
 // ReloadSecrets re-reads the secret set through the configured reloader and
@@ -352,7 +380,7 @@ func (p *Proxy) swapSecretConfigLocked(cfg SecretConfig) error {
 		}
 	}
 
-	newSet := buildSecretSet(cfg.Secrets, cfg.SecretAdTags, cfg.GlobalAdTag)
+	newSet := buildSecretSet(cfg.Secrets, cfg.SecretAdTags, cfg.GlobalAdTag, cfg.Limits)
 	oldSet := p.secrets.Swap(newSet)
 
 	for _, name := range newSet.names {
@@ -360,6 +388,7 @@ func (p *Proxy) swapSecretConfigLocked(cfg SecretConfig) error {
 	}
 
 	p.closeStaleConns(oldSet, newSet)
+	p.closeDeniedConns()
 
 	return nil
 }
@@ -431,6 +460,99 @@ func (p *Proxy) closeStaleConns(oldSet, newSet *secretSet) {
 	}
 }
 
+// checkLimits reports whether a new connection for the named secret is allowed
+// by its governance limits, combining the snapshot limit (disabled flag, expiry
+// deadline, quota ceiling) with the live usage counter held in stats. The
+// returned DenyReason is DenyNone when allowed.
+func (p *Proxy) checkLimits(name string, lim SecretLimits) (bool, DenyReason) {
+	if lim.Disabled {
+		return false, DenyDisabled
+	}
+
+	if !lim.ExpiresAt.IsZero() && !time.Now().Before(lim.ExpiresAt) {
+		return false, DenyExpired
+	}
+
+	if lim.QuotaBytes > 0 && p.stats.QuotaUsed(name, lim.QuotaReset) >= lim.QuotaBytes {
+		return false, DenyQuota
+	}
+
+	return true, DenyNone
+}
+
+// closeDeniedConns closes every live stream whose secret is now denied because
+// it was disabled or has expired, so such a change applied via a reload or the
+// API takes effect immediately instead of only blocking new connections. A
+// quota overrun does not close live streams — consistent with the throttle,
+// existing connections are never killed mid-flight.
+func (p *Proxy) closeDeniedConns() {
+	set := p.secrets.Load()
+
+	limitByName := make(map[string]SecretLimits, len(set.names))
+	for i, name := range set.names {
+		limitByName[name] = set.limits[i]
+	}
+
+	var denied []*streamContext
+
+	p.liveMu.Lock()
+	for name, conns := range p.liveConns {
+		lim, ok := limitByName[name]
+		if !ok {
+			continue
+		}
+
+		if allowed, reason := p.checkLimits(name, lim); allowed || reason == DenyQuota {
+			continue
+		}
+
+		for sc := range conns {
+			denied = append(denied, sc)
+		}
+	}
+	p.liveMu.Unlock()
+
+	for _, sc := range denied {
+		sc.Close()
+	}
+}
+
+// rolloverAllQuotas applies a monthly quota rollover to every secret whose
+// policy is monthly, keeping the persisted and displayed usage fresh even for
+// secrets that no client is currently hitting.
+func (p *Proxy) rolloverAllQuotas() {
+	set := p.secrets.Load()
+	now := time.Now()
+
+	for i, name := range set.names {
+		if set.limits[i].QuotaReset == QuotaResetMonthly {
+			p.stats.rollover(name, set.limits[i].QuotaReset, now)
+		}
+	}
+}
+
+// startUsagePersistence periodically rolls quota periods over and flushes the
+// usage counters to usageStateFile until ctx is cancelled.
+func (p *Proxy) startUsagePersistence(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(usageFlushInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				p.rolloverAllQuotas()
+
+				if err := p.stats.FlushUsage(p.usageStateFile); err != nil {
+					p.logger.WarningError("cannot flush usage state", err)
+				}
+			}
+		}
+	}()
+}
+
 func (p *Proxy) doFakeTLSHandshake(ctx *streamContext) bool {
 	rewind := newConnRewind(ctx.clientConn)
 
@@ -475,6 +597,17 @@ func (p *Proxy) doFakeTLSHandshake(ctx *streamContext) bool {
 	ctx.secretName = set.names[result.MatchedIndex]
 	ctx.adTag = set.effectiveAdTag(result.MatchedIndex)
 	ctx.logger = ctx.logger.BindStr("secret_name", ctx.secretName)
+
+	// Enforce per-user governance limits before we speak TLS back. A denied
+	// user (disabled, expired, or over quota) is routed to the cover site just
+	// like a wrong secret, so the outcome is indistinguishable to a prober.
+	if allowed, reason := p.checkLimits(ctx.secretName, set.limits[result.MatchedIndex]); !allowed {
+		ctx.logger.BindStr("deny_reason", reason.String()).
+			Info("connection denied by per-user limit; routing to fronting")
+		p.doDomainFrontingForHost(ctx, rewind, result.MatchedHost)
+
+		return false
+	}
 
 	gangerNoise := p.doppelGanger.NoiseParams()
 	noiseParams := fake.NoiseParams{Mean: gangerNoise.Mean, Jitter: gangerNoise.Jitter}
@@ -662,11 +795,17 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 	logger := opts.getLogger("proxy")
 	updatersLogger := logger.Named("telegram-updaters")
 
-	initialSet := buildSecretSet(opts.getSecrets(), opts.SecretAdTags, opts.GlobalAdTag)
+	initialSet := buildSecretSet(opts.getSecrets(), opts.SecretAdTags, opts.GlobalAdTag, opts.SecretLimits)
 
 	stats := NewProxyStats()
 	for _, name := range initialSet.names {
 		stats.PreRegister(name)
+	}
+
+	if opts.UsageStateFile != "" {
+		if err := stats.LoadUsage(opts.UsageStateFile); err != nil {
+			logger.WarningError("cannot load usage state", err)
+		}
 	}
 
 	if opts.ThrottleMaxConnections > 0 {
@@ -715,6 +854,7 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 		ourIPv4:                     opts.PublicIPv4,
 		ourIPv6:                     opts.PublicIPv6,
 		advertisedPort:              opts.AdvertisedPort,
+		usageStateFile:              opts.UsageStateFile,
 	}
 
 	// The middle-proxy manager is always available so advertising can be
@@ -741,6 +881,10 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 	// no-op-with-error when no reloader was supplied.
 	if opts.APIBindTo != "" {
 		proxy.startAPIServer(ctx, opts.APIBindTo, opts.APIToken)
+	}
+
+	if opts.UsageStateFile != "" {
+		proxy.startUsagePersistence(ctx)
 	}
 
 	proxy.doppelGanger.Run()

@@ -9,24 +9,31 @@ import (
 )
 
 type tomlConfig struct {
-	Debug                       bool              `toml:"debug" json:"debug,omitempty"`
-	AllowFallbackOnUnknownDC    bool              `toml:"allow-fallback-on-unknown-dc" json:"allowFallbackOnUnknownDc,omitempty"`
-	Secret                      string            `toml:"secret" json:"secret,omitempty"`
-	Secrets                     map[string]string `toml:"secrets" json:"secrets,omitempty"`
-	AdTag                       string            `toml:"ad-tag" json:"adTag,omitempty"`
-	SecretAdTags                map[string]string `toml:"secret-ad-tags" json:"secretAdTags,omitempty"`
-	APIToken                    string            `toml:"api-token" json:"apiToken,omitempty"`
-	BindTo                      any               `toml:"bind-to" json:"bindTo"`
-	ProxyProtocolListener       bool              `toml:"proxy-protocol-listener" json:"proxyProtocolListener"`
-	PreferIP                    string            `toml:"prefer-ip" json:"preferIp,omitempty"`
-	AutoUpdate                  bool              `toml:"auto-update" json:"autoUpdate,omitempty"`
-	DomainFrontingPort          uint              `toml:"domain-fronting-port" json:"domainFrontingPort,omitempty"`
-	DomainFrontingIP            string            `toml:"domain-fronting-ip" json:"domainFrontingIp,omitempty"`
-	DomainFrontingProxyProtocol bool              `toml:"domain-fronting-proxy-protocol" json:"domainFrontingProxyProtocol,omitempty"`
-	TolerateTimeSkewness        string            `toml:"tolerate-time-skewness" json:"tolerateTimeSkewness,omitempty"`
-	Concurrency                 uint              `toml:"concurrency" json:"concurrency,omitempty"`
-	PublicIPv4                  string            `toml:"public-ipv4" json:"publicIpv4,omitempty"`
-	PublicIPv6                  string            `toml:"public-ipv6" json:"publicIpv6,omitempty"`
+	Debug                    bool              `toml:"debug" json:"debug,omitempty"`
+	AllowFallbackOnUnknownDC bool              `toml:"allow-fallback-on-unknown-dc" json:"allowFallbackOnUnknownDc,omitempty"`
+	Secret                   string            `toml:"secret" json:"secret,omitempty"`
+	Secrets                  map[string]string `toml:"secrets" json:"secrets,omitempty"`
+	AdTag                    string            `toml:"ad-tag" json:"adTag,omitempty"`
+	SecretAdTags             map[string]string `toml:"secret-ad-tags" json:"secretAdTags,omitempty"`
+	SecretLimits             map[string]struct {
+		Quota      string `toml:"quota" json:"quota,omitempty"`
+		QuotaReset string `toml:"quota-reset" json:"quotaReset,omitempty"`
+		Expires    string `toml:"expires" json:"expires,omitempty"`
+		Disabled   bool   `toml:"disabled" json:"disabled,omitempty"`
+	} `toml:"secret-limits" json:"secretLimits,omitempty"`
+	UsageStateFile              string `toml:"usage-state-file" json:"usageStateFile,omitempty"`
+	APIToken                    string `toml:"api-token" json:"apiToken,omitempty"`
+	BindTo                      any    `toml:"bind-to" json:"bindTo"`
+	ProxyProtocolListener       bool   `toml:"proxy-protocol-listener" json:"proxyProtocolListener"`
+	PreferIP                    string `toml:"prefer-ip" json:"preferIp,omitempty"`
+	AutoUpdate                  bool   `toml:"auto-update" json:"autoUpdate,omitempty"`
+	DomainFrontingPort          uint   `toml:"domain-fronting-port" json:"domainFrontingPort,omitempty"`
+	DomainFrontingIP            string `toml:"domain-fronting-ip" json:"domainFrontingIp,omitempty"`
+	DomainFrontingProxyProtocol bool   `toml:"domain-fronting-proxy-protocol" json:"domainFrontingProxyProtocol,omitempty"`
+	TolerateTimeSkewness        string `toml:"tolerate-time-skewness" json:"tolerateTimeSkewness,omitempty"`
+	Concurrency                 uint   `toml:"concurrency" json:"concurrency,omitempty"`
+	PublicIPv4                  string `toml:"public-ipv4" json:"publicIpv4,omitempty"`
+	PublicIPv6                  string `toml:"public-ipv6" json:"publicIpv6,omitempty"`
 	DomainFronting              struct {
 		Host          string `toml:"host" json:"host,omitempty"`
 		IP            string `toml:"ip" json:"ip,omitempty"`
