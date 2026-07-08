@@ -404,6 +404,7 @@ func runProxy(conf *config.Config, version, configPath string) error { //nolint:
 		SecretAdTags:   conf.GetSecretAdTags(),
 		SecretLimits:   conf.GetSecretLimits(),
 		UsageStateFile: conf.UsageStateFile,
+		EmitTraffic:    conf.Stats.StatsD.Enabled.Get(false) || conf.Stats.Prometheus.Enabled.Get(false),
 		PublicIPv4:     conf.PublicIPv4.Get(nil),
 		PublicIPv6:     conf.PublicIPv6.Get(nil),
 		AdvertisedPort: int(conf.GetFirstBindPort()),

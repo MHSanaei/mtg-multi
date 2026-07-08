@@ -163,6 +163,7 @@ type Proxy struct {
 	advertisedPort int
 
 	usageStateFile string
+	emitTraffic    bool
 
 	stats           *ProxyStats
 	secrets         atomic.Pointer[secretSet]
@@ -640,6 +641,25 @@ func (p *Proxy) doObfuscatedHandshake(ctx *streamContext) error {
 	return nil
 }
 
+// wrapTraffic wraps conn so per-read/write byte counts are emitted as
+// EventTraffic, but only when a metrics observer is configured (emitTraffic).
+// EventTraffic is consumed solely by the statsd/prometheus observers, so when
+// none is enabled the wrapper is skipped entirely — avoiding a heap allocation
+// (plus time.Now, a streamID hash and a channel send) on every relay read and
+// write.
+func (p *Proxy) wrapTraffic(conn essentials.Conn, ctx *streamContext) essentials.Conn {
+	if !p.emitTraffic {
+		return conn
+	}
+
+	return connTraffic{
+		Conn:     conn,
+		streamID: ctx.streamID,
+		stream:   p.eventStream,
+		ctx:      ctx,
+	}
+}
+
 func (p *Proxy) doTelegramCall(ctx *streamContext) error {
 	// When this stream carries an advertising tag, route it through a Telegram
 	// middle proxy so a sponsored channel appears. On any failure we log and
@@ -689,12 +709,7 @@ func (p *Proxy) doTelegramCall(ctx *streamContext) error {
 		return fmt.Errorf("cannot perform server handshake: %w", err)
 	}
 
-	ctx.telegramConn = connTraffic{
-		Conn:     tgConn,
-		streamID: ctx.streamID,
-		stream:   p.eventStream,
-		ctx:      ctx,
-	}
+	ctx.telegramConn = p.wrapTraffic(tgConn, ctx)
 
 	telegramHost, _, err := net.SplitHostPort(foundAddr.Address)
 	if err != nil {
@@ -733,12 +748,7 @@ func (p *Proxy) doMiddleProxyCall(ctx *streamContext) error {
 		return fmt.Errorf("cannot dial middle proxy: %w", err)
 	}
 
-	ctx.telegramConn = connTraffic{
-		Conn:     stream,
-		streamID: ctx.streamID,
-		stream:   p.eventStream,
-		ctx:      ctx,
-	}
+	ctx.telegramConn = p.wrapTraffic(stream, ctx)
 
 	p.eventStream.Send(ctx, NewEventConnectedToDC(ctx.streamID, middleIP, ctx.dc))
 
@@ -763,12 +773,7 @@ func (p *Proxy) doDomainFrontingForHost(ctx *streamContext, conn *connRewind, ho
 		frontConn = newConnProxyProtocol(ctx.clientConn, frontConn)
 	}
 
-	frontConn = connTraffic{
-		Conn:     frontConn,
-		ctx:      ctx,
-		streamID: ctx.streamID,
-		stream:   p.eventStream,
-	}
+	frontConn = p.wrapTraffic(frontConn, ctx)
 
 	tracker := newIdleTracker(p.idleTimeout)
 
@@ -855,6 +860,7 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 		ourIPv6:                     opts.PublicIPv6,
 		advertisedPort:              opts.AdvertisedPort,
 		usageStateFile:              opts.UsageStateFile,
+		emitTraffic:                 opts.EmitTraffic,
 	}
 
 	// The middle-proxy manager is always available so advertising can be

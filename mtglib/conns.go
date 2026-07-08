@@ -102,8 +102,13 @@ func newConnProxyProtocol(source, target essentials.Conn) *connProxyProtocol {
 // idleTracker is a shared idle tracker for a pair of relay connections.
 // Both directions update the same timestamp so that activity in one direction
 // prevents the other (idle) direction from timing out.
+//
+// lastActive holds unix-nanoseconds in an atomic.Int64 rather than a
+// *time.Time behind an atomic.Pointer: touch() runs on every relay read and
+// write (both directions), so storing a plain int64 avoids a heap allocation
+// per operation on the hot path.
 type idleTracker struct {
-	lastActive atomic.Pointer[time.Time]
+	lastActive atomic.Int64 // unix nanoseconds of the last activity
 	timeout    time.Duration
 }
 
@@ -115,12 +120,11 @@ func newIdleTracker(timeout time.Duration) *idleTracker {
 }
 
 func (t *idleTracker) touch() {
-	stamp := time.Now()
-	t.lastActive.Store(&stamp)
+	t.lastActive.Store(time.Now().UnixNano())
 }
 
 func (t *idleTracker) isIdle() bool {
-	return time.Since(*t.lastActive.Load()) >= t.timeout
+	return time.Now().UnixNano()-t.lastActive.Load() >= int64(t.timeout)
 }
 
 type connIdleTimeout struct {

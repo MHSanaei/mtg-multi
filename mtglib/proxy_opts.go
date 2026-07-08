@@ -269,6 +269,16 @@ type ProxyOpts struct {
 	// This is an optional setting.
 	UsageStateFile string
 
+	// EmitTraffic controls whether per-read/write EventTraffic events are
+	// produced for relayed connections. These events are consumed only by the
+	// statsd/prometheus observers, so leave it false when no metrics sink is
+	// configured: doing so skips a heap allocation (plus time.Now, a streamID
+	// hash and a channel send) on every relay read and write. The CLI sets it
+	// automatically when statsd or prometheus is enabled.
+	//
+	// This is an optional setting.
+	EmitTraffic bool
+
 	// PublicIPv4 and PublicIPv6 advertise this proxy's externally reachable
 	// addresses. They are used as the proxy's own address in the middle-proxy
 	// RPC handshake and RPC_PROXY_REQ; required to be correct behind NAT.
