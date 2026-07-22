@@ -84,6 +84,43 @@ func TestUpdateLastSeen(t *testing.T) {
 	assert.False(t, lastSeen.After(after))
 }
 
+func TestAccessEvents(t *testing.T) {
+	t.Parallel()
+
+	stats := NewProxyStats()
+	stats.RecordAccess("alice", "203.0.113.7:54321", "149.154.167.50:443")
+	stats.RecordAccess("bob", "[2001:db8::7]:54321", "[2001:67c:4e8:f002::a]:443")
+
+	response := stats.buildResponse()
+	if len(response.AccessEvents) != 2 {
+		t.Fatalf("access event count = %d, want 2", len(response.AccessEvents))
+	}
+	first := response.AccessEvents[0]
+	if first.ID != 1 || first.SecretName != "alice" || first.ClientAddress != "203.0.113.7:54321" || first.TargetAddress != "149.154.167.50:443" {
+		t.Fatalf("unexpected first access event: %+v", first)
+	}
+	if response.AccessEvents[1].ID != 2 {
+		t.Fatalf("second access event ID = %d, want 2", response.AccessEvents[1].ID)
+	}
+}
+
+func TestAccessEventsRing(t *testing.T) {
+	t.Parallel()
+
+	stats := NewProxyStats()
+	for i := 0; i < accessEventLimit+2; i++ {
+		stats.RecordAccess("alice", "203.0.113.7:54321", "149.154.167.50:443")
+	}
+
+	events := stats.buildResponse().AccessEvents
+	if len(events) != accessEventLimit {
+		t.Fatalf("access event count = %d, want %d", len(events), accessEventLimit)
+	}
+	if events[0].ID != 3 || events[len(events)-1].ID != accessEventLimit+2 {
+		t.Fatalf("access event IDs = %d..%d, want 3..%d", events[0].ID, events[len(events)-1].ID, accessEventLimit+2)
+	}
+}
+
 func TestGetOrCreateLazy(t *testing.T) {
 	t.Parallel()
 

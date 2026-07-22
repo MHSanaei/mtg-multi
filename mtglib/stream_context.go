@@ -17,6 +17,7 @@ type streamContext struct {
 	telegramConn     essentials.Conn
 	streamID         string
 	dc               int
+	targetAddress    string
 	matchedSecretKey []byte
 	secretName       string
 	adTag            *[AdTagLength]byte
