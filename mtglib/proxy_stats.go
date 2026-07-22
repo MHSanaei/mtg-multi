@@ -17,6 +17,19 @@ import (
 // monthly quota periods are rolled over for display freshness.
 const usageFlushInterval = 30 * time.Second
 
+const accessEventLimit = 4096
+
+// AccessEventJSON describes one authenticated client connection that reached a
+// Telegram upstream. The management API retains a bounded, monotonically
+// numbered window so supervisors can persist access records between scrapes.
+type AccessEventJSON struct {
+	ID            uint64    `json:"id"`
+	Timestamp     time.Time `json:"timestamp"`
+	SecretName    string    `json:"secret_name"`
+	ClientAddress string    `json:"client_address"`
+	TargetAddress string    `json:"target_address"`
+}
+
 type secretStats struct {
 	connections atomic.Int64
 	bytesIn     atomic.Int64
@@ -65,12 +78,60 @@ type ProxyStats struct {
 	users     map[string]*secretStats
 	startedAt time.Time
 
+	accessMu     sync.Mutex
+	accessSeq    uint64
+	accessEvents []AccessEventJSON
+	accessNext   int
+
 	// Throttle: per-user connection caps recomputed every throttleInterval.
 	throttleMu       sync.RWMutex
 	throttleCaps     map[string]int64
 	throttleLimit    int64
 	throttleInterval time.Duration
 	throttleActive   atomic.Bool
+}
+
+// RecordAccess retains one successful authenticated connection for management
+// API consumers. Events are returned oldest-first and overwrite the oldest
+// entry after the bounded window fills.
+func (s *ProxyStats) RecordAccess(name, clientAddress, targetAddress string) {
+	s.accessMu.Lock()
+	defer s.accessMu.Unlock()
+
+	s.accessSeq++
+	event := AccessEventJSON{
+		ID:            s.accessSeq,
+		Timestamp:     time.Now().UTC(),
+		SecretName:    name,
+		ClientAddress: clientAddress,
+		TargetAddress: targetAddress,
+	}
+	if len(s.accessEvents) < accessEventLimit {
+		s.accessEvents = append(s.accessEvents, event)
+
+		return
+	}
+
+	s.accessEvents[s.accessNext] = event
+	s.accessNext = (s.accessNext + 1) % accessEventLimit
+}
+
+func (s *ProxyStats) accessSnapshot() []AccessEventJSON {
+	s.accessMu.Lock()
+	defer s.accessMu.Unlock()
+
+	if len(s.accessEvents) == 0 {
+		return nil
+	}
+
+	events := make([]AccessEventJSON, 0, len(s.accessEvents))
+	if len(s.accessEvents) < accessEventLimit {
+		return append(events, s.accessEvents...)
+	}
+	events = append(events, s.accessEvents[s.accessNext:]...)
+	events = append(events, s.accessEvents[:s.accessNext]...)
+
+	return events
 }
 
 // NewProxyStats creates a new ProxyStats instance.
@@ -358,6 +419,7 @@ type StatsResponse struct {
 	TotalConnections int64                    `json:"total_connections"`
 	Throttle         *ThrottleJSON            `json:"throttle,omitempty"`
 	Users            map[string]UserStatsJSON `json:"users"`
+	AccessEvents     []AccessEventJSON        `json:"access_events,omitempty"`
 }
 
 // ThrottleJSON is the throttle portion of the stats JSON response.
@@ -440,6 +502,7 @@ func (s *ProxyStats) buildResponse() StatsResponse {
 		TotalConnections: totalConns,
 		Throttle:         throttle,
 		Users:            users,
+		AccessEvents:     s.accessSnapshot(),
 	}
 }
 

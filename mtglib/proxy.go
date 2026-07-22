@@ -265,6 +265,8 @@ func (p *Proxy) ServeConn(conn essentials.Conn) {
 		return
 	}
 
+	p.stats.RecordAccess(ctx.secretName, ctx.clientConn.RemoteAddr().String(), ctx.targetAddress)
+
 	tracker := newIdleTracker(p.idleTimeout)
 
 	relay.Relay(
@@ -710,6 +712,7 @@ func (p *Proxy) doTelegramCall(ctx *streamContext) error {
 	}
 
 	ctx.telegramConn = p.wrapTraffic(tgConn, ctx)
+	ctx.targetAddress = foundAddr.Address
 
 	telegramHost, _, err := net.SplitHostPort(foundAddr.Address)
 	if err != nil {
@@ -749,6 +752,7 @@ func (p *Proxy) doMiddleProxyCall(ctx *streamContext) error {
 	}
 
 	ctx.telegramConn = p.wrapTraffic(stream, ctx)
+	ctx.targetAddress = middleIP.String()
 
 	p.eventStream.Send(ctx, NewEventConnectedToDC(ctx.streamID, middleIP, ctx.dc))
 
