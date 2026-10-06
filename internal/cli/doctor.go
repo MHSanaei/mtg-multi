@@ -372,12 +372,22 @@ func (d *Doctor) checkNetworkAddresses(ntw mtglib.Network, dc int, addresses []s
 	return 0, lastErr
 }
 
+// getFirstSecretHost returns the host of the secret with the lexicographically
+// smallest name. GetSecrets is a map, so ranging over it directly would make
+// the doctor check a different secret from run to run.
 func (d *Doctor) getFirstSecretHost() string {
-	for _, s := range d.conf.GetSecrets() {
-		return s.Host
+	secrets := d.conf.GetSecrets()
+
+	names := make([]string, 0, len(secrets))
+	for name := range secrets {
+		names = append(names, name)
 	}
 
-	return ""
+	if len(names) == 0 {
+		return ""
+	}
+
+	return secrets[slices.Min(names)].Host
 }
 
 func (d *Doctor) checkFrontingDomain(ntw mtglib.Network) bool {
