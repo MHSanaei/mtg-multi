@@ -1,9 +1,12 @@
 package utils
 
 import (
+	"errors"
 	"fmt"
 	"net"
+	"time"
 
+	"github.com/mhsanaei/mtg-multi/mtglib"
 	"github.com/mhsanaei/mtg-multi/network"
 )
 
@@ -11,19 +14,25 @@ type Listener struct {
 	net.Listener
 }
 
+// Accept returns the next connection with client socket options applied. A
+// connection whose options cannot be set (typically it was reset by the client
+// right after the handshake) is closed and skipped: returning an error here
+// would stop the whole accept loop because of one bad client.
 func (l Listener) Accept() (net.Conn, error) {
-	conn, err := l.Listener.Accept()
-	if err != nil {
-		return nil, err //nolint: wrapcheck
+	for {
+		conn, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err //nolint: wrapcheck
+		}
+
+		if err := network.SetClientSocketOptions(conn, 0); err != nil {
+			conn.Close() //nolint: errcheck
+
+			continue
+		}
+
+		return conn, nil
 	}
-
-	if err := network.SetClientSocketOptions(conn, 0); err != nil {
-		conn.Close() //nolint: errcheck
-
-		return nil, fmt.Errorf("cannot set TCP options: %w", err)
-	}
-
-	return conn, nil
 }
 
 func NewListener(bindTo string, bufferSize int) (net.Listener, error) {
@@ -61,13 +70,24 @@ func NewMultiListener(listeners ...net.Listener) *MultiListener {
 	return ml
 }
 
+// acceptLoop forwards connections and errors from one listener. It stops only
+// when the listener is closed: a temporary error (for example, out of file
+// descriptors) must not silently stop accepting on this listener forever.
 func (ml *MultiListener) acceptLoop(l net.Listener) {
+	var delay time.Duration
+
 	for {
 		conn, err := l.Accept()
 		ml.connCh <- acceptResult{conn: conn, err: err}
 
-		if err != nil {
+		switch {
+		case err == nil:
+			delay = 0
+		case errors.Is(err, net.ErrClosed):
 			return
+		default:
+			delay = mtglib.AcceptRetryDelay(delay)
+			time.Sleep(delay)
 		}
 	}
 }
