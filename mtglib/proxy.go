@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mhsanaei/mtg-multi/essentials"
+	"github.com/mhsanaei/mtg-multi/internal/logthrottle"
 	"github.com/mhsanaei/mtg-multi/mtglib/internal/dc"
 	"github.com/mhsanaei/mtg-multi/mtglib/internal/doppel"
 	"github.com/mhsanaei/mtg-multi/mtglib/internal/middleproxy"
@@ -22,6 +23,11 @@ import (
 	"github.com/mhsanaei/mtg-multi/mtglib/obfuscation"
 	"github.com/panjf2000/ants/v2"
 )
+
+// pendingHandshakesLogInterval limits the log line about connections rejected
+// by the per-IP pending-handshake limit: one line per interval, with the number
+// of suppressed ones.
+const pendingHandshakesLogInterval = 10 * time.Second
 
 // secretSet is an immutable snapshot of the secrets a proxy serves. The proxy
 // keeps it behind an atomic pointer so a running handshake always reads a
@@ -150,6 +156,7 @@ type Proxy struct {
 	pendingHandshakes           *pendingHandshakes
 	pendingHandshakesPerIP      uint32
 	pendingHandshakesDryRun     bool
+	pendingHandshakesLog        *logthrottle.Throttle
 	tolerateTimeSkewness        time.Duration
 	idleTimeout                 time.Duration
 	handshakeTimeout            time.Duration
@@ -236,7 +243,11 @@ func (p *Proxy) ServeConn(conn essentials.Conn) {
 	}
 
 	if !admitted {
-		ctx.logger.Info("too many pending handshakes from this ip")
+		// Under a flood every connection is rejected here: the event above
+		// counts each of them, the log line is rate limited.
+		if ok, suppressed := p.pendingHandshakesLog.Allow(); ok {
+			ctx.logger.BindInt("suppressed", suppressed).Info("too many pending handshakes from this ip")
+		}
 
 		return
 	}
@@ -883,6 +894,7 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 		pendingHandshakes:        newPendingHandshakes(),
 		pendingHandshakesPerIP:   uint32(min(opts.PendingHandshakesPerIP, math.MaxUint32)), //nolint: gosec
 		pendingHandshakesDryRun:  opts.PendingHandshakesDryRun,
+		pendingHandshakesLog:     logthrottle.New(pendingHandshakesLogInterval),
 		telegram:                 tg,
 		doppelGanger: doppel.NewGanger(
 			ctx,
