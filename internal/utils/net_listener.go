@@ -4,9 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"time"
 
-	"github.com/mhsanaei/mtg-multi/mtglib"
 	"github.com/mhsanaei/mtg-multi/network"
 )
 
@@ -73,21 +71,19 @@ func NewMultiListener(listeners ...net.Listener) *MultiListener {
 // acceptLoop forwards connections and errors from one listener. It stops only
 // when the listener is closed: a temporary error (for example, out of file
 // descriptors) must not silently stop accepting on this listener forever.
+//
+// It does not pause after a temporary error: the error is handed to the
+// consumer (Proxy.Serve), which owns the retry policy, logs the error and
+// pauses before the next Accept. Pausing here as well applied the delay twice.
+// The loop cannot spin either: the send to connCh blocks while its buffer is
+// full, so Accept is retried at the consumer's pace.
 func (ml *MultiListener) acceptLoop(l net.Listener) {
-	var delay time.Duration
-
 	for {
 		conn, err := l.Accept()
 		ml.connCh <- acceptResult{conn: conn, err: err}
 
-		switch {
-		case err == nil:
-			delay = 0
-		case errors.Is(err, net.ErrClosed):
+		if errors.Is(err, net.ErrClosed) {
 			return
-		default:
-			delay = mtglib.AcceptRetryDelay(delay)
-			time.Sleep(delay)
 		}
 	}
 }

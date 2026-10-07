@@ -226,6 +226,100 @@ func (suite *MultiListenerTestSuite) TestTemporaryErrorDoesNotStopListener() {
 	}
 }
 
+// failingListener fails every Accept with a temporary error until it is
+// closed and counts the calls.
+type failingListener struct {
+	net.Listener
+
+	calls  atomic.Int32
+	closed atomic.Bool
+}
+
+func (l *failingListener) Accept() (net.Conn, error) {
+	l.calls.Add(1)
+
+	if l.closed.Load() {
+		return nil, net.ErrClosed
+	}
+
+	return nil, syscall.EMFILE
+}
+
+func (l *failingListener) Close() error {
+	l.closed.Store(true)
+
+	return l.Listener.Close() //nolint: wrapcheck
+}
+
+func (suite *MultiListenerTestSuite) newFailingMultiListener() (*utils.MultiListener, *failingListener) {
+	base, err := net.Listen("tcp", "127.0.0.1:0")
+	suite.Require().NoError(err)
+
+	failing := &failingListener{Listener: base}
+	ml := utils.NewMultiListener(failing)
+
+	suite.T().Cleanup(func() {
+		ml.Close() //nolint: errcheck
+
+		// Drain until the accept loop reports the closed listener and exits.
+		deadline := time.After(2 * time.Second)
+
+		for {
+			result := make(chan error, 1)
+
+			go func() {
+				_, err := ml.Accept()
+				result <- err
+			}()
+
+			select {
+			case err := <-result:
+				if errors.Is(err, net.ErrClosed) {
+					return
+				}
+			case <-deadline:
+				return
+			}
+		}
+	})
+
+	return ml, failing
+}
+
+// MultiListener must not pause after a temporary error: the consumer
+// (Proxy.Serve) owns the retry pause, and pausing in both places applied the
+// delay twice.
+func (suite *MultiListenerTestSuite) TestTemporaryErrorsAreForwardedWithoutPause() {
+	ml, _ := suite.newFailingMultiListener()
+
+	const errorsToRead = 8
+
+	start := time.Now()
+
+	for range errorsToRead {
+		_, err := ml.Accept()
+		suite.Require().ErrorIs(err, syscall.EMFILE)
+	}
+
+	// With a pause of 5ms doubling on each error inside MultiListener, reading
+	// 8 errors took at least 5+10+...+320 = 635ms.
+	suite.Less(time.Since(start), 300*time.Millisecond)
+}
+
+// Without its own pause the accept loop must still not spin: it retries
+// Accept only as fast as the consumer takes the results.
+func (suite *MultiListenerTestSuite) TestTemporaryErrorsDoNotSpin() {
+	ml, failing := suite.newFailingMultiListener()
+
+	_, err := ml.Accept()
+	suite.Require().ErrorIs(err, syscall.EMFILE)
+
+	time.Sleep(100 * time.Millisecond)
+
+	// One result taken, one in the channel buffer, one blocked on send.
+	suite.LessOrEqual(failing.calls.Load(), int32(3))
+}
+
 func TestMultiListener(t *testing.T) {
 	t.Parallel()
 	suite.Run(t, &MultiListenerTestSuite{})
