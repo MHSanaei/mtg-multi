@@ -21,6 +21,17 @@ type streamContext struct {
 	secretName       string
 	adTag            *[AdTagLength]byte
 	logger           Logger
+
+	// releasePendingHandshake frees the per-IP pending-handshake slot, if any.
+	releasePendingHandshake func()
+}
+
+// finishPendingHandshake releases the pending-handshake slot of this stream.
+// It is safe to call several times.
+func (s *streamContext) finishPendingHandshake() {
+	if s.releasePendingHandshake != nil {
+		s.releasePendingHandshake()
+	}
 }
 
 func (s *streamContext) Deadline() (time.Time, bool) {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -217,58 +218,32 @@ func warnSNIMismatch(conf *config.Config, ntw mtglib.Network, log mtglib.Logger)
 		return
 	}
 
-	res := runSNICheck(context.Background(), net.DefaultResolver, conf, ntw, host)
+	log = log.BindStr("hostname", host)
 
-	if res.ResolveErr != nil {
-		log.BindStr("hostname", host).
-			WarningError("SNI-DNS check: cannot resolve secret hostname", res.ResolveErr)
+	res, err := runSNICheck(context.Background(), conf, net.DefaultResolver, ntw, host)
+	if err != nil {
+		log.WarningError("SNI-DNS check: cannot resolve secret hostname", err)
 		return
 	}
 
-	if !res.PublicIPKnown() {
+	if res.OurIP4 == "" && res.OurIP6 == "" {
 		log.Warning("SNI-DNS check: cannot detect public IP address; set public-ipv4/public-ipv6 in config or run 'mtg doctor'")
 		return
 	}
 
-	v4Match := res.OurIPv4 == nil || res.IPv4Match
-	v6Match := res.OurIPv6 == nil || res.IPv6Match
-
-	if v4Match && v6Match {
-		return
+	if len(res.ResolvedIP4) > 0 && !slices.Contains(res.ResolvedIP4, res.OurIP4) {
+		log.
+			BindStr("public_ip", res.OurIP4).
+			BindStr("resolved", strings.Join(res.ResolvedIP4, ",")).
+			Warning("SNI-DNS check: address mismatch")
 	}
 
-	resolved := make([]string, 0, len(res.Resolved))
-	for _, ip := range res.Resolved {
-		resolved = append(resolved, ip.String())
+	if len(res.ResolvedIP6) > 0 && !slices.Contains(res.ResolvedIP6, res.OurIP6) {
+		log.
+			BindStr("public_ip", res.OurIP6).
+			BindStr("resolved", strings.Join(res.ResolvedIP6, ",")).
+			Warning("SNI-DNS check: address mismatch")
 	}
-
-	our := ""
-	if res.OurIPv4 != nil {
-		our = res.OurIPv4.String()
-	}
-
-	if res.OurIPv6 != nil {
-		if our != "" {
-			our += "/"
-		}
-
-		our += res.OurIPv6.String()
-	}
-
-	entry := log.BindStr("hostname", host).
-		BindStr("resolved", strings.Join(resolved, ", ")).
-		BindStr("public_ip", our)
-
-	if res.OurIPv4 != nil {
-		entry = entry.BindStr("ipv4_match", fmt.Sprintf("%t", v4Match))
-	}
-
-	if res.OurIPv6 != nil {
-		entry = entry.BindStr("ipv6_match", fmt.Sprintf("%t", v6Match))
-	}
-
-	entry.Warning("SNI-DNS mismatch: secret hostname does not resolve to this server's public IP. " +
-		"DPI may detect and block the proxy. See 'mtg doctor' for details")
 }
 
 // warnIgnoredOfficialEnvs flags environment variables of the official
@@ -411,6 +386,9 @@ func runProxy(conf *config.Config, version, configPath string) error { //nolint:
 
 		ThrottleMaxConnections: conf.Throttle.MaxConnections.Get(0),
 		ThrottleCheckInterval:  conf.Throttle.CheckInterval.Get(5 * time.Second),
+
+		PendingHandshakesPerIP:  conf.Defense.PendingHandshakes.MaxPerIP.Get(0),
+		PendingHandshakesDryRun: conf.Defense.PendingHandshakes.DryRun.Get(false),
 	}
 
 	proxy, err := mtglib.NewProxy(opts)
@@ -422,7 +400,7 @@ func runProxy(conf *config.Config, version, configPath string) error { //nolint:
 	listeners := make([]net.Listener, 0, len(bindAddrs))
 
 	for _, addr := range bindAddrs {
-		l, err := utils.NewListener(addr, 0)
+		l, err := utils.NewListener(addr, 0, logger.Named("listener"))
 		if err != nil {
 			for _, prev := range listeners {
 				prev.Close() //nolint: errcheck
@@ -450,13 +428,47 @@ func runProxy(conf *config.Config, version, configPath string) error { //nolint:
 		}
 	}
 
-	ctx := utils.RootContext()
+	ctx, cancel := context.WithCancel(utils.RootContext())
+	defer cancel()
 
-	go proxy.Serve(listener) //nolint: errcheck
+	// If the accept loop stops for any reason other than shutdown, the process
+	// must not stay alive without accepting connections: stop and report the
+	// error, so a supervisor (systemd, docker) restarts it.
+	serveErr := make(chan error, 1)
 
+	go func() {
+		serveErr <- proxy.Serve(listener)
+
+		cancel()
+	}()
+
+	return waitAndShutdown(ctx, serveErr, func() {
+		listener.Close() //nolint: errcheck
+		proxy.Shutdown()
+	})
+}
+
+// waitAndShutdown waits for shutdown, stops the proxy and decides whether the
+// accept loop has failed. A Serve that failed on its own puts its error into
+// the channel before calling cancel(), so the error is already there when ctx
+// is done. On an ordinary stop (SIGTERM) Serve is still running; the error it
+// returns because stop() closes the listener is not a failure, otherwise every
+// stop or restart would exit with code 1.
+func waitAndShutdown(ctx context.Context, serveErr <-chan error, stop func()) error {
 	<-ctx.Done()
-	listener.Close() //nolint: errcheck
-	proxy.Shutdown()
+
+	var serveFailure error
+
+	select {
+	case serveFailure = <-serveErr:
+	default:
+	}
+
+	stop()
+
+	if serveFailure != nil {
+		return fmt.Errorf("proxy stopped accepting connections: %w", serveFailure)
+	}
 
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"sort"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mhsanaei/mtg-multi/essentials"
+	"github.com/mhsanaei/mtg-multi/internal/logthrottle"
 	"github.com/mhsanaei/mtg-multi/mtglib/internal/dc"
 	"github.com/mhsanaei/mtg-multi/mtglib/internal/doppel"
 	"github.com/mhsanaei/mtg-multi/mtglib/internal/middleproxy"
@@ -21,6 +23,11 @@ import (
 	"github.com/mhsanaei/mtg-multi/mtglib/obfuscation"
 	"github.com/panjf2000/ants/v2"
 )
+
+// pendingHandshakesLogInterval limits the log line about connections rejected
+// by the per-IP pending-handshake limit: one line per interval, with the number
+// of suppressed ones.
+const pendingHandshakesLogInterval = 10 * time.Second
 
 // secretSet is an immutable snapshot of the secrets a proxy serves. The proxy
 // keeps it behind an atomic pointer so a running handshake always reads a
@@ -146,6 +153,10 @@ type Proxy struct {
 	streamWaitGroup sync.WaitGroup
 
 	allowFallbackOnUnknownDC    bool
+	pendingHandshakes           *pendingHandshakes
+	pendingHandshakesPerIP      uint32
+	pendingHandshakesDryRun     bool
+	pendingHandshakesLog        *logthrottle.Throttle
 	tolerateTimeSkewness        time.Duration
 	idleTimeout                 time.Duration
 	handshakeTimeout            time.Duration
@@ -222,9 +233,36 @@ func (p *Proxy) ServeConn(conn essentials.Conn) {
 		ctx.logger.Info("Stream has been finished")
 	}()
 
+	// Per-IP limit on pending (unauthenticated) handshakes. The slot is
+	// released as soon as the secret is verified or the connection goes to the
+	// fronting domain, so authenticated sessions never hold it.
+	release, action, admitted := p.pendingHandshakes.acquire(
+		ctx.ClientIP(), p.pendingHandshakesPerIP, p.pendingHandshakesDryRun)
+	if action != "" {
+		p.eventStream.Send(ctx, NewEventPendingHandshakeLimit(ctx.streamID, action))
+	}
+
+	if !admitted {
+		// Under a flood every connection is rejected here: the event above
+		// counts each of them, the log line is rate limited.
+		if ok, suppressed := p.pendingHandshakesLog.Allow(); ok {
+			ctx.logger.BindInt("suppressed", suppressed).Info("too many pending handshakes from this ip")
+		}
+
+		return
+	}
+
+	if release != nil {
+		defer release()
+
+		ctx.releasePendingHandshake = release
+	}
+
 	if !p.doFakeTLSHandshake(ctx) {
 		return
 	}
+
+	ctx.finishPendingHandshake()
 
 	if !p.stats.CanConnect(ctx.secretName) {
 		ctx.logger.Info("connection throttled")
@@ -281,7 +319,7 @@ func (p *Proxy) Serve(listener net.Listener) error {
 	defer p.streamWaitGroup.Done()
 
 	for {
-		conn, err := listener.Accept()
+		conn, err := acceptWithRetry(p.ctx, listener, p.logger)
 		if err != nil {
 			select {
 			case <-p.ctx.Done():
@@ -675,11 +713,21 @@ func (p *Proxy) doTelegramCall(ctx *streamContext) error {
 
 	dcid := ctx.dc
 
-	addresses := p.telegram.GetAddresses(dcid)
+	// Media DCs come with a negative id. Addresses are kept per absolute DC
+	// number, but the sign must survive into the handshake with Telegram.
+	lookupDC := dcid
+	if lookupDC < 0 {
+		lookupDC = -lookupDC
+	}
+
+	addresses := p.telegram.GetAddresses(lookupDC)
 	if len(addresses) == 0 && p.allowFallbackOnUnknownDC {
 		ctx.logger = ctx.logger.BindInt("original_dc", dcid)
 		ctx.logger.Warning("unknown DC, fallbacks")
 		ctx.dc = dc.DefaultDC
+		if dcid < 0 {
+			ctx.dc = -dc.DefaultDC
+		}
 		addresses = p.telegram.GetAddresses(dc.DefaultDC)
 	}
 
@@ -756,6 +804,9 @@ func (p *Proxy) doMiddleProxyCall(ctx *streamContext) error {
 }
 
 func (p *Proxy) doDomainFrontingForHost(ctx *streamContext, conn *connRewind, host string) {
+	// The handshake is over: a fronted connection must not hold a pending slot.
+	ctx.finishPendingHandshake()
+
 	p.eventStream.Send(p.ctx, NewEventDomainFronting(ctx.streamID))
 	conn.Rewind()
 
@@ -840,6 +891,10 @@ func NewProxy(opts ProxyOpts) (*Proxy, error) {
 		idleTimeout:              opts.getIdleTimeout(),
 		handshakeTimeout:         opts.getHandshakeTimeout(),
 		allowFallbackOnUnknownDC: opts.AllowFallbackOnUnknownDC,
+		pendingHandshakes:        newPendingHandshakes(),
+		pendingHandshakesPerIP:   uint32(min(opts.PendingHandshakesPerIP, math.MaxUint32)), //nolint: gosec
+		pendingHandshakesDryRun:  opts.PendingHandshakesDryRun,
+		pendingHandshakesLog:     logthrottle.New(pendingHandshakesLogInterval),
 		telegram:                 tg,
 		doppelGanger: doppel.NewGanger(
 			ctx,
