@@ -25,7 +25,7 @@ run = "go build -tags prof"
 description = "Update dependencies"
 run = [
     "go get -u",
-    "go mod tidy -go=1.26"
+    "go mod tidy -go=1.27.2"
 ]
 
 [tasks.lint]

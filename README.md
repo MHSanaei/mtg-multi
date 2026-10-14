@@ -49,7 +49,7 @@ for the shared internals.
 ## Quick start
 
 Download a binary from [Releases](https://github.com/mhsanaei/mtg-multi/releases),
-or build from source (requires Go 1.26+):
+or build from source (requires Go 1.27.2+):
 
 ```console
 git clone https://github.com/mhsanaei/mtg-multi.git
