@@ -1,6 +1,6 @@
 module github.com/mhsanaei/mtg-multi
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/OneOfOne/xxhash v1.2.8
@@ -14,7 +14,7 @@ require (
 	github.com/ncruces/go-dns v1.3.3
 	github.com/panjf2000/ants/v2 v2.12.1
 	github.com/pelletier/go-toml/v2 v2.4.3
-	github.com/pires/go-proxyproto v0.15.0
+	github.com/pires/go-proxyproto v0.16.0
 	github.com/prometheus/client_golang v1.25.0
 	github.com/rs/zerolog v1.35.1
 	github.com/smira/go-statsd v1.3.4
@@ -38,8 +38,8 @@ require (
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
 	github.com/prometheus/client_model v0.6.3 // indirect
 	github.com/prometheus/common v0.72.1 // indirect
-	github.com/prometheus/procfs v0.22.0 // indirect
-	github.com/stretchr/objx v0.7.0 // indirect
+	github.com/prometheus/procfs v0.23.0 // indirect
+	github.com/stretchr/objx v0.8.0 // indirect
 	github.com/txthinking/runnergroup v0.0.0-20250224021307-5864ffeb65ae // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/sync v0.24.0 // indirect
